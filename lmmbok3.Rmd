@@ -1,0 +1,512 @@
+---
+title: "Linear Mixed Model Analysis"
+author: 
+  - name: "Dr. Muhammad Abdul Hafiz bin Kamarul Zaman"
+  - name: "Dr. Tengku Muhammad Hudzaifah bin Tengku Mokhtar"
+  - name: "Dr. Muhammad Za'im bin Mohd Samsuri"
+date: "15 June 2025"
+format: 
+  html:
+    toc: true
+    toc-title: "Contents"
+    toc-location: left
+    toc-depth: 3
+    toc-expand: true
+    number-sections: true
+    code-fold: false
+    code-summary: "Show the Code"
+    theme: 
+      light: united
+      dark: cyborg
+    embed-resources: true
+    df-print: paged
+editor: visual
+---
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(
+  message   = FALSE,
+  warning   = FALSE
+)
+```
+
+```{r}
+knitr::include_graphics("group.gif")
+```
+
+# INTRODUCTION
+
+# DATASET
+
+dataset is taken from . the dataset is adopted from a research that objective is to study the relationship between time spent outdoors and mental wellbeing, across all of Scotland. The researcher contact all the Local Authority Areas (LAAs) and ask them to collect data for them, with participants completing the Warwick-Edinburgh Mental Wellbeing Scale (WEMWBS), a self-report measure of mental health and well-being, and being asked to estimate the average number of hours they spend outdoors each week.
+
+## Variables
+
+the variables for the dataset are:
+
+1.  **local authority area** (`laa`): consist of 20 area
+2.  **mental wellbeing score** (`wellbeing`) : Wellbeing score (Warwick Edinburgh Mental Wellbeing Scale). Range 15 - 75, with higher scores indicating better mental wellbeing
+3.  **outdoor time** (`outdoor_time`) : Number of hours spent outdoors per week
+4.  **density** (`density`) : Population density of local authority area (number of people per square km)
+5.  **gender** (`gender`) : male or female
+6.  **Participant Identifier** (\`ppt) : unique ID for each participants
+
+individuals (ppt) are nested within district (laa). This means:
+
+Level 1 is participants (ppt) Level 2 is district (laa)
+
+# Install and load packages
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(gtsummary)
+library(readxl)
+library(broom)
+library(DT)
+library(lme4)
+library(kableExtra)
+library(lmerTest)
+library(lmtest)
+library(broom.mixed)
+```
+
+# Read Data
+
+```{r}
+data1 <- read_excel("D:/R Workspace/correlated numerical assignment/scotlandfinal.xlsx")
+View(data1)
+```
+
+# Data wrangling
+
+```{r}
+glimpse(data1)
+```
+
+```{r}
+summary(data1)
+```
+
+```{r}
+boxplot(data1$outdoor_time,
+        main = "Boxplot of Outdoor Time",
+        ylab = "Outdoor Time",
+        col = "lightblue",
+        border = "darkblue")
+```
+
+```{r}
+data1 <- data1 %>% 
+  mutate(gender = factor(gender, labels = c('male', 'female')))
+```
+
+```{r}
+data1 <- data1 %>% 
+  mutate(gender = factor(gender, labels = c('male', 'female')))
+```
+
+```{r}
+data1<-data1 %>% mutate_if(is.character,~ as_factor(.))
+```
+
+# EDA
+
+summarising the data
+
+```{r}
+data1 %>%
+  select(laa, gender, outdoor_time, wellbeing, density) %>%
+  tbl_summary()
+```
+
+```{r}
+data1 %>%
+  ggplot(aes(x = outdoor_time, y = wellbeing)) +
+  geom_point() +
+  geom_smooth(method = lm)
+```
+
+```{r}
+data1 %>%
+  ggplot(aes(x = outdoor_time, y = wellbeing, 
+             col = gender, gender)) +
+  geom_point() +
+  geom_smooth(method = lm)
+```
+
+# Comparing groups with multilevel model
+
+Start with null model (simplest model)
+
+```         
+                                      𝑠𝑐𝑜𝑟𝑒𝑖𝑗=𝛽0+𝑢0𝑗+𝑒𝑖𝑗
+```
+
+1.  **𝑠𝑐𝑜𝑟𝑒𝑖𝑗= the score attainment of participants 𝑖 in district𝑗**
+2.  **𝛽0 = the overall mean wellbeing score across district**
+3.  **𝑢0𝑗 = the effect of district𝑗on score. This is also level-2 residuals**
+4.  **𝑒𝑖𝑗 = individual-level residual. This is level-1 residuals**
+
+the null model : score
+
+# Single level analysis
+
+using lm() as the outcome is assume as normally distributed
+
+```{r}
+m.lm <- lm( wellbeing ~ 1, data = data1)
+summary(m.lm)
+```
+
+# Multilevel analysis
+
+We use the lme4 package, by starting with the constant only model (null model) with no explanatory variable or basically a random intercept with constant only model. the model is named as m0, the random effect is due to district.
+
+```{r}
+m0 <- 
+  lmer(wellbeing ~ 1 + (1 | laa), 
+       data = data1,  REML = FALSE)
+summary(m0)
+```
+
+based on this model,the overall mean wellbeing score = 41.807. the mean for district j is estimated as 41.807 + 𝑈̂ 0𝑗 where 𝑈̂ 0𝑗 is the district residuals
+
+the ICC is:
+
+```{r}
+99.92   /(99.92  + 27.24)
+```
+
+78.5% variance of the wellbeing score is attributed to the difference between district
+
+or use `tidy()` for a proper table
+
+```{r}
+tidy(m0) %>%
+  kbl() %>%
+  kable_styling()
+```
+
+difference between multilevel and linear regression model
+
+```{r}
+mlr <- lm(wellbeing ~ 1, data = data1)
+```
+
+```{r}
+logLik(mlr) ; logLik(m0)
+```
+
+the diiference is 70.88
+
+```{r}
+anova(m0,mlr)
+```
+
+the comparison is significant, thus the complex model of the the random intercept is the better model.
+
+## Random intercept model
+
+### adding the explanatory variable
+
+We will model the effect of a individual-level variable outdoor time in the model
+
+𝑠𝑐𝑜𝑟𝑒𝑖𝑗=𝛽0+𝛽1outdoor_time𝑖𝑗+𝑢0𝑗+𝑒𝑖𝑗
+
+```{r}
+ri <- lmer(wellbeing ~ outdoor_time + (1 | laa), 
+           data = data1, 
+           REML = FALSE)
+summary(ri)
+```
+
+or
+
+```{r}
+tidy(ri, conf.int = TRUE) %>%
+  kbl %>%
+  kable_styling()
+```
+
+the equation for average fitted regression line (across district)
+
+```         
+    𝑠𝑐𝑜𝑟𝑒𝑖𝑗=38.1917741 + 0.2133955outdoor_time𝑖𝑗
+    
+```
+
+the slope is fixed, while the intercept differs as it depends on the random effect of the district
+
+### Prediction
+
+we can predict the wellbeing score based on the mixed model for each individual. the prediction is the average fitted regression plus the district intercept
+
+```{r}
+pred_score <- fitted(ri)
+head(pred_score, 10)
+```
+
+there will be 20 random effect because there were 20 district, and the random effect of each hospital as below
+
+```{r}
+rand_ef <- ranef(ri)
+head(rand_ef$laa, 20)
+```
+
+to get the fitted values
+
+```{r}
+ri_fitted <- augment(ri)
+```
+
+```{r}
+ri_fitted %>% 
+  slice(1:12)
+```
+
+```{r}
+ri_fitted %>% 
+  slice(42:52)
+```
+
+confirmation with manual calculation
+
+using the first observation:
+
+1.  intercept: 38.1917741
+2.  outdoor time : 20 minutes : 0.2133955(minutes)
+3.  Community: West Lothian : -10.0872472
+
+```{r}
+38.1917741-10.0872472	+(0.2133955*20)
+```
+
+the value from the table and manual calculation is similar which is 32.37244
+
+### Plot
+
+```{r}
+ggplot(ri_fitted, aes(outdoor_time, .fitted, group = laa )) +
+  geom_point(alpha = 0.3) +
+  geom_line(alpha = 0.3) +
+  ylab('fitted wellbeing score') +
+  xlab('outdorr_time') +
+  ggtitle('The fitted value for random intercept model with outdoor time ') +
+  theme_bw()
+```
+
+### Variance
+
+### variance between district
+
+in the constant only model the variance is 99.92 then the variance slightly inncrease after adding outdoor_time where model with outdoor_time as the explanatory variable now has the variance of 100.71 After accounting for coutdoor_time effects, the proportion of unexplained variance that is due to differences between district increases slightly to 100.71/(100.71+25.24)=80% .
+
+```{r}
+100.71/(100.71+25.24)
+```
+
+### within district variance
+
+1.  constant only model variance is 27.24
+2.  reduction of variance after adding outdoor_time
+3.  model with outdoor_time as the explanatory variable 25.24
+
+we can see that the addition of outdoor_time has increases the amount of variance at the district but not at the individual level. The between-district variance has increases from 99.92 to 100.71, and the within-school variance has reduced from 27.24 to 25.24.
+
+# Random slope model
+
+now extend the random intercept model fitted before to allow both the intercept and the slope to vary randomly across district.
+
+## model
+
+```         
+Wellbeing 𝑠𝑐𝑜𝑟𝑒𝑖𝑗=𝛽0+𝛽1outdoor_time𝑖𝑗+𝑢0𝑗+𝑢1𝑗outdoor_time𝑖𝑗+𝑒𝑖𝑗
+```
+
+```{r}
+rs <- lmer(wellbeing ~ outdoor_time + (1 + outdoor_time | laa), 
+           data = data1, REML = FALSE)
+```
+
+```{r}
+summary(rs)
+```
+
+```{r}
+rs <- lmer(wellbeing ~ outdoor_time + (1 + outdoor_time | laa), data = data1, control = lmerControl(optimizer = 'bobyqa'),
+           REML = FALSE)
+summary(rs)
+```
+
+nicer output
+
+```{r}
+tidy(rs) %>% kbl() %>%
+  kable_styling()
+```
+
+## The fitted values
+
+```{r}
+rs_res <- augment(rs)
+head(rs_res, 20)
+```
+
+The outdoor effect for district𝑗is estimated as 0.2116051+𝑢̂ 𝑖𝑗, and the between-school variance in these slopes is estimated as 0.09.
+
+That means for the average district we predict an increase of 0.2116051 points in the wellbeing score for every increase in 1 hour of outdoor time.
+
+The intercept variance of 38.2735950 is interpreted as the between-district variance when outdoor_time=0
+
+The intercept-slope correlation is estimated as 0.38 which means that district with a high intercept tend to have a steeper-than-average slope. This suggests that local authorities (laa) with higher baseline levels of wellbeing tend to show a stronger positive effect of outdoor_time on wellbeing. In other words, the more time people spend outdoors in districts that already have high average wellbeing, the greater the marginal gain in wellbeing from additional outdoor time.
+
+## Comparing models between random intercept and random slope
+
+```{r}
+anova(ri, rs)
+```
+
+There is very strong evidence that the outdoor time effect differs across district
+
+## Interpretation of random effects across district
+
+The outdoor time effect for district 𝑗 is estimated as 0.21161+𝑈̂ 1𝑗, and the between-school variance in these slopes is estimated as 0.09.
+
+For the average district we predict an increase of 0.21161 points in the wellbeing score for each hour of outdoor time. A 95% coverage interval for the school slopes is estimated as 0.21161±1.96√0.09 =−0.37639 to 0.79961.
+
+Thus, assuming a normal distribution, we would expect the middle 95% of district to have a slope between −0.37639 and 0.79961.
+
+```{r}
+ra.eff.rs <- ranef(rs, condVar = TRUE)
+datatable(ra.eff.rs$laa)
+```
+
+```{r}
+plot(ra.eff.rs)
+```
+
+0 is equal to mean outdoor time of 16 hours per week
+
+```{r}
+ra.eff.rs.sc <- ra.eff.rs$laa
+names(ra.eff.rs.sc)
+```
+
+```{r}
+ra.eff.rs.sc <- ra.eff.rs.sc %>%
+  rename(rs_slope = outdoor_time, rs_int = "(Intercept)")
+
+ra.eff.rs.sc %>% 
+ggplot(aes( x = rs_int, y = rs_slope)) + 
+  geom_point() +
+  geom_vline(xintercept = 0) + 
+  geom_hline(yintercept = 0)
+```
+
+This plot illustrates a positive correlation between intercepts and slopes:
+
+districts with higher baseline wellbeing (positive random intercepts) tend to have stronger positive effects of outdoor_time on wellbeing (higher slopes).
+
+Conversely, districts with lower-than-average baseline wellbeing (negative intercepts) tend to have weaker or negative relationships between outdoor_time and wellbeing.
+
+#MODEL
+
+```{r}
+expression(hat(wellbeingscore)[ij] == 
+           (38.2735950 + hat(u)[0 * j]) + 
+           (0.21161 + hat(u)[1 * j]) * outdoor_time[ij])
+
+```
+
+```{r}
+plot(1, 1, type = "n", xlab = "", ylab = "", axes = FALSE)
+text(1, 1,
+     expression(hat(wellbeingscore)[ij] == 
+                (38.2735950 + hat(u)[0 * j]) + 
+                (0.21161 + hat(u)[1 * j]) * outdoor_time[ij]),
+     cex = 1.2)
+
+```
+
+```{r}
+datatable(rs_res)
+```
+
+manual calculation :
+
+using the first observation:
+
+1.  intercept: 38.2735950
+2.  outdoor time : 20 minutes : 0.2116051(minutes)
+3.  Community: West Lothian : -3.57859346508806
+4.  outdoor time slope for west lothian :-0.321525576968577
+
+```{r}
+38.2735950-3.57859346508806+((0.2116051-0.321525576968577)*20)
+```
+
+similar to the fitted value given in the table above: 32.49659260739616
+
+#Adding a level 1 variable to the random slope model
+
+```{r}
+rs_gen <- lmer(wellbeing ~ outdoor_time + gender + (1 + outdoor_time | laa),
+                data = data1, REML = FALSE,
+                lmerControl(optimizer = 'bobyqa'))
+summary(rs_gen)
+```
+
+# adding level2 explanatory variables
+
+```{r}
+rs_den <- lmer(wellbeing ~ outdoor_time + density + (1 + outdoor_time | laa),
+                data = data1, REML = FALSE,
+                lmerControl(optimizer = 'bobyqa'))
+summary(rs_den)
+```
+
+```{r}
+anova(rs,rs_gen)
+```
+
+```{r}
+anova(rs,rs_den)
+```
+
+gender is not a significant covariates when included in the model.besides, model comparison also showed no significant difference between rs_den and rs_gen with the rs model.thus, the simpler model is chhosen. we remains with model with random slope for outdoor activity only
+
+# INTERACTION
+
+as there is only one variable significant, no interaction checking needed
+
+# CHECKING FOR ASSUMPTION
+
+Plot random effect
+
+```{r}
+library(lattice)
+randoms <- ranef(rs, condVar = TRUE)
+dotplot(randoms)
+```
+
+This plot above display the random effects estimates for different local authority areas "laa" in Scotland. The left side shows the variation in baseline levels of the outcome "wellbeing" score across different local authorities. Areas like Na h-Eileanan Siar and City of Edinburgh have higher-than-average baseline scores, while places such as Glasgow City and Falkirk fall below the overall mean, indicating lower baseline levels of the outcome.
+
+The right panel, the “outdoor_time” illustrates the estimated random slopes for the effect of outdoor time across each local authority. Here, the estimates are clustered around zero, suggesting that the effect of outdoor time on the outcome is relatively uniform across regions or that the model has shrunk the estimates toward the overall fixed slope due to limited group-level variation. This indicates that while baseline outcomes vary substantially between areas, the influence of outdoor time on the outcome does not differ much by location.
+
+```{r}
+plot(rs)
+```
+
+the residual appear randomly scattered near the zero line .the assumption of homocedasticity was met
+
+```{r}
+qqmath(rs)
+```
+
+the points majority clustered on the line, so the residual is normally distributed. the assumption was met.
+
+# References
+
+1.  Practical Linear Mixed Models. Kamarul Imran Musa. 25 March 20222.
+2.  https://uoepsy.github.io/lmm/00_datasets.html
