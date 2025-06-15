@@ -1,0 +1,344 @@
+---
+title: "Data Visualization"
+author: 
+  - name: "Dr. Muhammad Abdul Hafiz bin Kamarul Zaman"
+  - name: "Dr. Tengku Muhammad Huzaifah bin Tengku Mokhtar"
+  - name: "Dr. Muhammad Za'im bin Mohd Samsuri"
+date: "15 June 2025"
+format: 
+  html:
+    toc: true
+    toc-title: "Contents"
+    toc-location: left
+    toc-depth: 3
+    toc-expand: true
+    number-sections: true
+    code-fold: false
+    code-summary: "Show the Code"
+    theme: 
+      light: united
+      dark: cyborg
+    embed-resources: true
+    df-print: paged
+editor: visual
+---
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(
+  message   = FALSE,
+  warning   = FALSE
+)
+```
+
+# ![Team picture](gambar.JPG)
+
+# INTRODUCTION
+
+## PURPOSE
+
+The purpose of this assignment is to provide data visualization analysis of the Zoonotic Malaria infection cases in Pahang state for the year of 2011-2022. the data visualization will give some insights on the epidemiological profile of Zoonotic Malaria infected individual and later will helps in improving the control and prevention action of Malaria in Pahang specifically
+
+# Overview of the Dataset
+
+The dataset comprises information from 888 patients across 11 district in Pahang from 2011 to 2022. This hierarchial dataset consist of 2 levels of patients factors and also the districts (level2). the variables consist of :
+
+-   **District (`Daerah`)**: Identifies where the infection happened (11 district).
+-   **Age (`Umur`)**: The age of the patient when diagnosed with the Zoonotic Malaria infection (in year).
+-   **Gender (`Jantina`)**: The gender of the patient who diagnosed with the Zoonotic Malaria infection.
+-   **Citizenship (`Warganegara`)**: Status of the infected patients whether he is Malaysian citizen (hold a legal document) or foreigner who works and live in Malaysia but didnot possess citizenship ID.
+-   **Forestry related work (`Pekerjaan`)**: The jobscope of the patients whether related to forestry or not
+-   **Parasite density (`KepadatanParasit`)**: Total number of Plasmodium parasite observed under the micrscope
+-   **Year (`Year`)**: The year when the patient was diagnosed with Zoonotic Malaria (from 2011 to 2022)
+-   **Duration (`Duration_days`)**: The duration from onset of symptoms to diagnosis. it might reflect delayed in diagnosis if more than 4 days.
+
+# INSTALLING PACKAGES AND LOADING LIBRARIES
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(gtsummary)
+library(readxl)
+library(broom)
+library(DT)
+library(summarytools)
+library(patchwork)
+library(GGally)
+library(gganimate)
+library(gifski)
+```
+
+## READ DATASET
+
+```{r}
+data1 <- read_excel("knowlesi.xlsx")
+View(data1)
+```
+
+## Data wrangling
+
+```{r}
+data1<-data1 %>% mutate_if(is.character,~ as_factor(.))
+```
+
+```{r}
+data1$KepadatanParasit <- as.numeric(as.character(data1$KepadatanParasit))
+```
+
+```{r}
+glimpse(data1)
+```
+
+## Construct new meaningful variables (time to diagnosis)
+
+```{r}
+data1 <- data1 %>% mutate(dur = as.duration(dateOnset %--% dateNotifikasi))
+```
+
+```{r}
+data1 <- data1 %>%
+  mutate(duration_days = as.integer(abs(as.numeric(dur)) / 86400))
+
+```
+
+```{r}
+summary(data1)
+```
+
+## SELECT VARIABLES OF INTEREST
+
+```{r}
+library(dplyr)
+
+data2 <- data1 %>%
+  dplyr::select(Daerah, Umur, Jantina, Hamil, Bangsa, Warganegara, Pekerjaan, Kawasan, KepadatanParasit, KlasifikasiKes, Year, duration_days)
+
+summary(data2)
+```
+
+```{r}
+glimpse(data2)
+```
+
+```{r}
+view(data2)
+```
+
+# DESCRIPTIVE TABLE
+
+```{r}
+# Create the descriptive table
+table_summary <- data2 %>%
+  tbl_summary(
+    by = Daerah,
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+  ) %>%
+  add_overall() %>%
+  modify_header(label ~ "**Variable**") %>%
+  modify_spanning_header(
+    all_stat_cols() ~ "**Summary Statistics**"
+  ) %>%
+  modify_caption("**Sociodemographic characteristic of  Zoonotic Malaria infected individual based on District**")
+
+# Print the table
+table_summary
+```
+
+Comment:
+
+The table provides a summary of the distribution of age, gender, citizenship, forestry related jobs, district profile , parasite density, and duration of onset to diagosis across 11 district in Pahang which includes 888 patients. The majority of patients is male (84%), malaysian citizen (81%), work in forestry related job (52%), came from rural area (90%). the mean age of patients was 37years old (SD=16), with the mean onset to diagnosis time was 7 days (SD = 5). The table shows that patients predominantly infected in Kuala Lipis (n=455).
+
+# DATA VISUALIZATION
+
+## LINE PLOT
+
+The Line graph is used to visualize the distribution of the Zoonotic Malaria cases from 2011 to 2022, the visualization helps in identifying the trend of cases over the years.
+
+`geom_line` Helps to visualize the overall trend or progression of malaria cases across time. the `blue` sets the line in blue colored and size=1 indicate the size of the line.
+
+`geom_point` Highlights the exact values at each year, complementing the line for better clarity. the `red` color indicate the color of the point and `size=2` is the size of the point.
+
+```{r}
+# Define years and corresponding cases
+Year <- 2011:2022
+Cases <- c(36, 92, 118, 91, 34, 32, 74, 114, 69, 54, 100, 74)
+
+# Create data frame
+data_cases <- data.frame(Year, Cases)
+
+# View the table
+print(data_cases)
+
+```
+
+```{r}
+ggplot(data_cases, aes(x = Year, y = Cases)) +
+  geom_line(color = "blue", size = 1) +
+  geom_point(color = "red", size = 2) +
+  labs(title = "Malaria Cases by Year",
+       x = "Year", y = "Number of Cases") +
+  theme_minimal()
+
+```
+
+The line graph above illustrates the annual number of malaria cases across a span of years from 2011 to 2022. The trend shown is notably fluctuating, indicating considerable year-to-year variation in case numbers. Peaks are observed in 2013 and 2018, where malaria cases surpassed 110, suggesting potential outbreak periods or lapses in control efforts. These are followed by sharp declines in 2015 and 2016, indicating improved management or natural downturns in transmission. A secondary rise occurs in 2021, though it is slightly lower than the previous peaks, followed again by a reduction in 2022.
+
+## BAR PLOT
+
+The bar plot is used to visualize the distribution of Zoonotic Malaria cases based for each district across the 10 year period. Besides, additional boxplot were constructed to visualise the comparison between the number of cases based on the gender and working nature across the year and district.This visualization helps identify the group with higher number of cases which suggest for control and prevention activity to be focus on individual with this specific background.
+
+The ggplot2 package was used to construct the bar plot, employing the ggplot() function to specify the dataset and aesthetic mappings. The aes() function mapped the Year and District variable to the x-axis and the interaction between gender and working nature to the fill aesthetic. To create side-by-side bars the geom_bar() function was utilized. The geom_hline was used to create a horizontal line, which can be to visualize the threshold level.For clarity, the plot was customized with titles and labels using the labs() function to add a title and labels for the x-axis, y-axis, and fill legend. The theme_minimal() function was applied to give the plot a clean and simple appearance, while the scale_fill_manual() function was used to manually set the colors for the different fill categories, ensuring the plot is visually appealing and easy to interpret.
+
+```{r}
+cong_dat <- data2 %>%
+  group_by(Year, Daerah) %>%
+  summarise(Status = n())
+```
+
+```{r}
+cong_dat
+```
+
+### Cases across the district from 2011 to 2022
+
+```{r}
+cases_malaria <- ggplot(data2, aes(x = Daerah)) +
+  geom_bar(fill = "steelblue") +
+  labs(title = "Cases across the district between 2011 to 2022",
+       x = "District",
+       y = "Count") +
+  theme_minimal()
+
+cases_malaria
+```
+
+the district of Lipis recorded the highest cummulative Zoonotic Malaria cases from 2011 to 2022, followed by Jerantut, Maran, Raub and others. the district with lowest case between 2011 to 2022 is the Cameron Highland district
+
+### Cases across the district for each year
+
+```{r}
+ggplot(cong_dat, aes(x = Year, y = Status, fill = Daerah)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 10) +
+  scale_fill_manual(values = c("blue", "red", "orange", "yellow", "pink", "purple", "green", "brown","lightgreen", "lightgrey", "chartreuse2"))
+```
+
+if comparing cases year by year basis, similar finding can be seen as Lipis recorded the highest number of cases every year, followed by Jerantut and others. The Jerantut district contributed a large portion in number of cases for early part of the cohort up until 2018. however for the last 3 years, other district , like Maran, Raub and kuantan has a comparable number of cases to Jerantut.
+
+### total number of cases between citizenship from 2011 to 2022
+
+```{r}
+
+cong_dat2 <- data2 %>%
+  group_by(Year, Warganegara) %>%
+  summarise(Status = n())
+
+ggplot(cong_dat2, aes(x = Year, y = Status, fill = Warganegara)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 30) +
+  scale_fill_manual(values = c("blue", "red"))
+```
+
+when comparing between citizen and non-citizen cases, across the year, majority of the cases were among Malaysian citizen
+
+### comparison between gender across district and years
+
+```{r}
+cong_dat3 <- data2 %>%
+  group_by(Year, Jantina) %>%
+  summarise(Status = n())
+
+ggplot(cong_dat3, aes(x = Year, y = Status, fill = Jantina)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 30) +
+  scale_fill_manual(values = c("purple", "grey"))
+
+cong_dat4 <- data2 %>%
+  group_by(Daerah, Jantina) %>%
+  summarise(Status = n())
+
+ggplot(cong_dat4, aes(x = Daerah, y = Status, fill = Jantina)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 30) +
+  scale_fill_manual(values = c("purple", "grey"))
+```
+
+Majority of the cases were among Male. In Lipis district, the number of cases among female can be seen higher to other district which relatively having similar number of cases. female cases never reach 30 cases every year.
+
+### comparison between work nature of cases across district
+
+```{r}
+cong_dat5 <- data2 %>%
+  group_by(Daerah, Pekerjaan) %>%
+  summarise(Status = n())
+
+ggplot(cong_dat5, aes(x = Daerah, y = Status, fill = Pekerjaan)) +
+  geom_bar(stat = "identity") +
+  geom_hline(yintercept = 30) +
+  scale_fill_manual(values = c("darkgreen", "darkred"))
+```
+
+there is not much different between number of cases when comparing the job nature of the patients across the district.
+
+## BOXPLOT
+
+```{r}
+box_plot1 <- ggplot(data2, aes(x = Daerah, y = Umur, fill = Daerah)) +
+  geom_boxplot() +
+  labs(title = "Box Plot of age of zoonotic malaria cases between district from 2011 to 2022",
+       x = "District",
+       y = "Age") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3")
+
+box_plot1
+```
+
+The figure is a boxplot which illustrate the distribution of age across the 11 districts.the median age for patients with Zoonotic Malaria for each districts were in between 20-40 which indicate young adult. the range of age were approximately similar between district except Bera, Cameron Highland and Pekan
+
+## SCATTER PLOT
+
+```{r}
+scatter_plot1 <- ggplot(data2, aes(x = duration_days, y = KepadatanParasit, color = duration_days)) +
+  geom_point(size = 3, alpha = 0.7) +
+  labs(
+    title = "Duration from Onset to Diagnosis vs. Parasite Count",
+    x = "Duration (days)",
+    y = "Parasite Count"
+  ) +
+  scale_color_gradient(low = "blue", high = "red") +
+  theme_minimal()
+
+scatter_plot1
+```
+
+The scatterplot illustrates the relationship between the duration from symptom onset to diagnosis (in days) and the parasite count among patients. Notably, the wide range in parasite counts, spanning several orders of magnitude, has resulted in a highly skewed distribution. This skewness hampers the visualization of cases with relatively low parasite counts, which appear compressed near the lower portion of the y-axis.
+
+Moreover, the data points are predominantly clustered along the lower axis, reflecting a concentration of cases with low parasite density across varying durations. This pattern, combined with the absence of a discernible upward or downward trend, suggests a weak or negligible correlation between time to diagnosis and parasite load. The observed imbalance in data distribution reinforces the likelihood that delay in diagnosis is not a strong predictor of parasite burden in this cohort.
+
+# Recommendation
+
+1.  control and prevention action should be given priority in the area with high burden of cases especially Kuala Lipis.
+
+2.  Awareness on Zoonotic Malaria infection should be targeted to young male adult and local citizen of Malaysia irrespective of their working nature as data showed they are the most vulnerable group for the Zoonotic Malaria infection.
+
+# Animation
+
+To make the visualisation different and interactive, the graph and plots can be transform into animation
+
+```{r}
+
+knitr::include_graphics("malaria_cases.gif")
+```
+
+```{r}
+
+knitr::include_graphics("malaria_gender.gif")
+```
+
+# References
+
+1.  https://www.coursera.org/learn/jhu-advanced-data-visualization-r
+2.  https://posit-connect.kk.usm.my/content/8f474ac1-9027-479e-bdf4-b6b8d6083bab/Data%20Visualization%20Assignment.html
