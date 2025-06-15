@@ -1,0 +1,588 @@
+---
+title: "Semi Parametric Analysis"
+author: 
+  - name: "Dr. Muhammad Za'im bin Mohd Samsuri"
+  - name: "Dr. Tengku Muhammad Hudzaifah bin Tengku Mokhtar"
+  - name: "Dr. Muhammad Abdul Hafiz bin Kamarul"
+date: "15 June 2025"
+format: 
+  html:
+    toc: true
+    toc-title: "Contents"
+    toc-location: left
+    toc-depth: 3
+    toc-expand: true
+    number-sections: true
+    code-fold: false
+    code-summary: "Show the Code"
+    theme: 
+      light: united
+      dark: cyborg
+    embed-resources: true
+    df-print: paged
+editor: visual
+---
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(
+  message   = FALSE,
+  warning   = FALSE
+)
+```
+
+```{r}
+knitr::include_graphics("group.gif")
+```
+
+# Load required packages
+
+```{r}
+library(DT)
+library(lmtest)
+library(caret)
+library (pROC)
+library(generalhoslem)
+library(ResourceSelection)
+library(survival)
+library(survminer)
+library(haven)
+library(broom)
+library(tidyverse)
+library(lubridate)
+library(gtsummary)
+library(ggplot2)
+library(corrplot)
+library(lubridate)
+```
+
+# Load dataset
+
+```{r}
+data2 <- read_dta("stroke_fatality.dta")
+glimpse(data2)
+```
+
+# Check the structure of the dataset
+
+convert to factor
+
+```{r}
+data2<-data2 %>% mutate_if(is.labelled,~ as_factor(.))
+glimpse(data2)
+```
+
+# Select relevant variables
+
+time:time to event
+
+-status3b: status of the patient (dead or alive)\
+-gcs: Glasgow Coma Scale score\
+-age2:age in numerical\
+-sex3:male,female\
+-dm2cat: diabetes mellitus category(yes(1) or no(0))\
+-hpt2cat: hypertension category(yes(1) or no(0))\
+-dyslipid2cat: dyslipidemia category(yes(1) or no(0))\
+-icd10cat3: ICD-10 category of the stroke(CI and others,ICB,other hemorrhage)
+
+```{r}
+data2 <- data2 %>% select(time, gcs, status3b, age2, sex3, dm2cat, icd10cat3, hpt2cat, dyslipid2cat)
+data2
+glimpse(data2)
+```
+
+# Handle missing values (gcs)
+
+Missing values for the GCS variable were handled using mean imputation, where the average GCS value in the dataset was used to replace all missing entries. This simple method is appropriate when the proportion of missing data is small.
+
+```{r}
+data2$gcs[is.na(data2$gcs)] <- mean(data2$gcs, na.rm = TRUE)
+glimpse(data2)
+str(data2)
+```
+
+# Summary data
+
+Explore data
+
+```{r}
+library(gtsummary)
+tbl_summary(data2)
+
+tbl_summary(
+  data2,
+  by = status3b,
+  label = list(
+    sex3 ~ "Sex",
+    dm2cat ~ "Diabetes Mellitus",
+    hpt2cat ~ "Hypertension",
+    dyslipid2cat ~ "Dyslipidemia",
+    gcs ~ "Earliest Glasgow Coma Scale",
+    age2 ~ "Age in Years",
+    icd10cat3 ~ "Stroke Subtype"
+  ),
+  statistic = list(
+    all_continuous() ~ "{mean} ({sd})",
+    all_categorical() ~ "{n} ({p}%)"
+  )
+) %>%
+  modify_header(label = "**Variable**") %>%
+  modify_spanning_header(c("stat_1", "stat_2") ~ "**Status**") %>%
+  modify_caption("Summary of Data by Status")
+```
+
+Among the patients, those who died tended to have lower Glasgow Coma Scale (GCS) scores at admission. Diabetes mellitus appeared more frequently in the group who died compared to those who survived. Hypertension was common in both groups, with only slight differences in proportion. The distribution of sex was generally similar between the two groups. Dyslipidemia showed a fairly even distribution as well. For stroke subtype, hemorrhagic and subarachnoid strokes appeared more often among those who died, while ischemic strokes were more frequent in the group who survived.
+
+# Kaplan Meier survival analysis
+
+## Kaplan Meier estimates
+
+Kaplan-Meier survival analysis is a non-parametric survival analysis
+
+```{r}
+KM1 <- survfit(Surv(time = time, event = status3b == 'dead') ~1, data = data2)
+summary(KM1)
+
+```
+
+The Kaplan-Meier analysis showed that the estimated survival probability at admission was 98.7%. By Day 5, survival declined to about 82.7%, and by Day 10, it was 68.3%. A more noticeable drop occurred after Day 12, with survival estimated at 60.3%, and it continued to decrease over time. By Day 29, the survival probability was around 26.3%, and at the end of follow-up (Day 41), it was 17.6%. The number of patients at risk decreased over time, especially after Day 25, leading to wider confidence intervals in the later estimates.
+
+### Plot the Kaplan-Meier survival curve
+
+```{r}
+ggsurvplot(KM1, data = data2, risk.table = TRUE, pval = TRUE)
+```
+
+## Kaplan-meire based on groups(sex)
+
+```{r}
+KM2 <- survfit(Surv(time = time, event = status3b== 'dead') ~ sex3, 
+                     type = "kaplan-meier", data = data2)
+summary(KM2)
+```
+
+### plot survival curve for kaplan meier by group(sex)
+
+```{r}
+ggsurvplot(KM2, data = data2, risk.table = TRUE, 
+           linetype = c(1,2), pval = TRUE)
+```
+
+The Kaplan-Meier analysis showed that both male and female patients experienced a decline in survival over time. Initially, survival was high in both groups, with females at 97.7% and males at 95.8%. However, survival declined more noticeably among females, reaching 77.9% by Day 5 and dropping to 9.8% by Day 41. In comparison, males showed a slower decline, with survival at 90.2% by Day 5 and 39.6% by Day 22. Although survival was lower among females throughout most time points.
+
+## kaplan meier based on dm status
+
+```{r}
+KM3 <- survfit(Surv(time = time, event = status3b== 'dead') ~ dm2cat, 
+                     type = "kaplan-meier", data = data2)
+summary(KM3)
+```
+
+### plot survival curve for kaplan meier by group(dm)
+
+```{r}
+ggsurvplot(KM3, data = data2, risk.table = TRUE, 
+           linetype = c(1,2), pval = TRUE)
+```
+
+The survival analysis by diabetic status showed that both groups started with high initial survival estimates (98.7% in non-diabetics vs. 98.6% in diabetics). However, over time, survival declined more rapidly among those with diabetes. By Day 10, survival was about 63.7% in non-diabetics compared to 76.6% in diabetics. However, by Day 25, the survival estimate for diabetics dropped to 47.7%, while non-diabetics had a lower estimate of 34.5%. By the end of follow-up (Day 41), survival among diabetics reached 0%, though this should be interpreted cautiously due to the very small number at risk and wide confidence intervals. Overall, both groups showed decreasing trends in survival, with a slightly more variable pattern in the diabetic group.
+
+## kaplan meier based on hypertension status
+
+```{r}
+KM4 <- survfit(Surv(time = time, event = status3b== 'dead') ~ hpt2cat, 
+                     type = "kaplan-meier", data = data2)
+summary(KM4)
+```
+
+### plot survival curve for kaplan meier by group(hypertension)
+
+```{r}
+ggsurvplot(KM4, data = data2, risk.table = TRUE, 
+           linetype = c(1,2), pval = TRUE)
+```
+
+Patients without hypertension had slightly better early survival, with survival decreasing from 98.7% at baseline to around 55% by day 12 and 24% by day 41. Among those with hypertension, survival also declined steadily from 98.6% at baseline to about 62.5% by day 12 and 11.9% by day 29. Overall, both groups showed declining survival, but the hypertensive group experienced a more pronounced drop earlier, especially after day 10, indicating a potential association between hypertension and poorer short-term survival. However, caution is needed when interpreting late survival estimates due to smaller sample sizes and wider confidence intervals.
+
+# Estimate the survival function
+
+Using quantile() function to get the estimated survival duration for any percentile (with their 95% CI). For example, to get the value for survival duration at 25, 50 (median) and 75 percentile
+
+## overall
+
+```{r}
+quantile(KM1, probs = c(0.25, 0.50, 0.75))
+
+```
+
+Based on the Kaplan-Meier estimate, 25% of patients died within 7 days (95% CI: 6 to 12), 50% died within 22 days (95% CI: 14 to NA), and 75% died within 41 days (95% CI: 28 to NA). \## sex
+
+```{r}
+quantile(KM2, probs = c(0.25, 0.50, 0.75))
+
+```
+
+Among females, 25% died within 7 days (95% CI: 5 to 12), 50% within 25 days (95% CI: 12 to NA), and 75% within 29 days (95% CI: 25 to NA). Among males, 25% died within 9 days (95% CI: 6 to NA), 50% within 22 days (95% CI: 12 to NA), while the 75th percentile was not estimable due to censoring. \## dm status
+
+```{r}
+quantile(KM3, probs = c(0.25, 0.50, 0.75))
+
+```
+
+Among patients without diabetes (DM???), 25% died within 6 days (95% CI: 5 to 12), 50% within 18 days (95% CI: 12 to NA), and the 75th percentile could not be estimated due to censoring. Among those with diabetes (DM+), 25% died within 14 days (95% CI: 7 to NA), 50% within 25 days (95% CI: 14 to NA), and 75% within 28 days (95% CI: 28 to NA). \## hpt status
+
+```{r}
+quantile(KM4, probs = c(0.25, 0.50, 0.75))
+
+```
+
+Among patients without hypertension (HPT???), 25% died within 6 days (95% CI: 5 to 18), 50% within 18 days (95% CI: 9 to NA), and 75% within 41 days (95% CI: 41 to NA). Among those with hypertension (HPT+), 25% died within 9 days (95% CI: 6 to 14), 50% within 25 days (95% CI: 14 to NA), and 75% within 28 days (95% CI: 25 to NA).
+
+# Perform the log-rank test
+
+Comparing the survival estimates between levels of a group (categorical) variable \## To test if the survival estimates differ between groups (male vs female)
+
+```{r}
+logrank.sex <- survdiff(Surv(time = time, event = status3b == 'dead') ~ sex3,
+                        data = data2, rho = 0)
+logrank.sex
+```
+
+There is no statistically significant difference in survival between males and females (??? = 1.9, df = 1, p = 0.2). Even though females had slightly more observed deaths (38 vs 15), the difference is not significant (p \> 0.05).
+
+## To test if the survival estimates differ between groups DM status (yes,no)
+
+```{r}
+logrank.dm <- survdiff(Surv(time = time, event = status3b == 'dead') ~ dm2cat,
+                        data = data2, rho = 0)
+logrank.dm
+```
+
+There is no statistically significant difference in survival between patients with and without diabetes (DM2) (??? = 2.2, df = 1, p = 0.1). \## To test if the survival estimates differ between groups HPT status (yes,no)
+
+```{r}
+logrank.hpt <- survdiff(Surv(time = time, event = status3b == 'dead') ~ hpt2cat,
+                        data = data2, rho = 0)
+logrank.hpt
+```
+
+There is no significant difference in survival between patients with and without hypertension (??? = 0.0, df = 1, p = 0.9). \# Cox proportional hazard (PH) regression
+
+# Univariable and Multivarible Cox PH regression
+
+## Model with no covariate
+
+```{r}
+cox1  <- coxph(Surv(time = time, event = status3b == 'dead') ~ 1,
+                 data = data2)
+summary(cox1)
+```
+
+the null model estimates the baseline hazard of death over time for the entire sample (n = 226), without considering any covariates. The log-likelihood = -228.599, which serves as a reference point for comparing with more complex models
+
+## Model with covariate(uniavariable)
+
+### gcs
+
+```{r}
+
+cox.gcs <- coxph(Surv(time = time, event = status3b == 'dead') ~ gcs,
+                 data = data2)
+summary(cox.gcs)
+```
+
+There is a significant association between GCS score and survival (p \< 0.001). For each 1-point increase in GCS, the hazard of death decreases by 17% (HR = 0.825, 95% CI: 0.774-0.880). The concordance index is 0.785, indicating good predictive ability of the model. \### 2. dm \### 2. diabetes mellitus (DM2)
+
+```{r}
+
+cox.dm <- coxph(Surv(time = time, event = status3b == 'dead') ~ dm2cat,
+                 data = data2)
+summary(cox.dm)
+```
+
+There is no significant association between diabetes status (DM2) and survival (p = 0.14). Although those with DM2 had a 37% lower hazard of death (HR = 0.63), the confidence interval (0.34-1.16) crosses 1, indicating the result is not statistically significant. \### 3. hpt \### 3. hypertension (HPT2)
+
+```{r}
+
+cox.hpt <- coxph(Surv(time = time, event = status3b == 'dead') ~ hpt2cat,
+                 data = data2)
+summary(cox.hpt)
+```
+
+```{r}
+
+cox.icd10 <- coxph(Surv(time = time, event = status3b == 'dead') ~ icd10cat3,
+                 data = data2)
+summary(cox.icd10)
+```
+
+There is no significant association between hypertension status and survival (p = 0.934). The hazard ratio is 0.98 (95% CI: 0.55-1.74), indicating no meaningful difference in risk of death between those with and without hypertension.
+
+### Main effect models(multivariable)
+
+choose variables that are clinically relevant and statistically significant in univariable analysis
+
+```{r}
+cox.main <- coxph(
+  Surv(time = time, event = status3b == 'dead') ~ gcs + age2  + dm2cat + icd10cat3 + hpt2cat +dyslipid2cat,
+  data = data2
+)
+
+summary(cox.main)
+
+```
+
+In this model adjusting for multiple variables, lower GCS and older age were significantly associated with increased risk of death. Each unit increase in GCS reduced the hazard of death by 17% (HR = 0.83, p \< 0.001). Each year increase in age increased the hazard by 3% (HR = 1.03, p = 0.008). Other variables-including diabetes, hypertension, dyslipidemia, and diagnosis type-were not significantly associated with survival.
+
+### Model with interaction (gcs:age)
+
+```{r}
+cox.interaction <- coxph(
+  Surv(time = time, event = status3b == 'dead') ~ gcs + age2 + dm2cat + icd10cat3 + hpt2cat + dyslipid2cat + 
+    gcs:age2,
+  data = data2
+)
+
+summary(cox.interaction)
+
+```
+
+In the multivariable Cox model that includes the interaction between GCS and age, only GCS remained statistically significant. A one-point increase in GCS was associated with a 30% lower risk of death (HR = 0.70, 95% CI: 0.49-1.00, p = 0.048). The interaction term GCS and age was not significant (p = 0.332), indicating that the effect of GCS on survival did not vary significantly by age. All other variables - including age, diabetes, hypertension, dyslipidemia, and diagnosis category - were also not significantly associated with mortality. The model showed good discrimination with a concordance of 0.819, suggesting it predicts outcomes reliably.
+
+## Models comparison
+
+```{r}
+anova(cox.main, cox.interaction, test = 'Chisq')
+```
+
+The interaction between GCS and age was not statistically significant, so the simpler model without the interaction is preferred
+
+# Model checking
+
+## Linearity in hazard assumption
+
+Check only for numerical covariates
+
+```{r}
+
+data2$status_event <- ifelse(data2$status3b == "dead", 1, 0)
+
+
+data2_clean <- na.omit(data2[, c("time", "status_event", "gcs", "age2")])
+
+
+data2_clean$gcs <- as.numeric(data2_clean$gcs)
+data2_clean$age2 <- as.numeric(data2_clean$age2)
+
+fit <- coxph(Surv(time = time, event = status_event) ~ gcs + age2, data = data2_clean)
+
+
+ggcoxfunctional(fit = fit, data = data2_clean)
+
+```
+
+## Proportional hazard assumption
+
+### The km method
+
+```{r}
+prop.h <- cox.zph(cox.main, transform = 'km', global = TRUE)
+prop.h
+```
+
+The test for the proportional hazards assumption shows that all variables in the model, including GCS, age, diabetes, diagnosis, hypertension, and dyslipidemia, have p-values greater than 0.05. This indicates that there is no significant evidence of violation for any individual variable. The global test also shows a p-value of 0.591, suggesting that the overall model satisfies the proportional hazards assumption. Therefore, the Cox regression model is appropriate for this data.
+
+```{r}
+ggcoxzph(prop.h)
+```
+
+to look each clearly
+
+```{r}
+plot(prop.h)
+```
+
+### The rank method
+
+```{r}
+prop.h.r <- cox.zph(cox.main, transform = 'rank')
+prop.h.r
+```
+
+```{r}
+ggcoxzph(prop.h.r)
+```
+
+to look clearly
+
+```{r}
+plot(prop.h.r)
+```
+
+The global Schoenfeld test gave a p-value of 0.5915, suggesting that the proportional hazards (PH) assumption is not violated. In the residual plots, all covariates show smooth curves that are approximately flat, and most confidence bands include zero. There is no strong evidence of time-dependent effects. Thus, we can conclude that the Cox model is appropriate, and the PH assumption holds for all included variables.\`
+
+#Model diagnostics Prediction use expand.grid() function to create a dataframe
+
+```{r}
+cox.main.h <- tidy(cox.main, conf.int = TRUE)
+cox.main.hr <- tidy(cox.main, exponentiate = TRUE, conf.int = TRUE)
+bind_cols(cox.main.h, cox.main.hr)
+```
+
+create a new data frame for the purpose of prediction
+
+```{r}
+
+new_data <- expand.grid(
+  gcs = c(5, 10, 12),
+  age2 = c(40, 50, 60),
+  dm2cat = c("no", "yes"),
+  icd10cat3 = c("CI,Others", "SAH", "ICB, Other Haemorrhage"),
+  hpt2cat = c("no", "yes"),
+  dyslipid2cat = c("no", "yes")
+)
+
+new_data
+
+new_data
+```
+
+The linear predictor We will use main effect models cox.mv
+
+```{r}
+predict(cox.main, newdata = new_data, type = 'lp')
+```
+
+```{r}
+augment(cox.main, newdata = new_data)
+```
+
+This calculates the relative risk (Hazard Ratio) of created populations against the population sample (population) average, which are • mean gcs = 12.02 • mean age = 60.75 • proportion of diabetes = 38.5 percent • proportion of hypertension = 65.3 percent The first observation shows that this population has • gcs = 5 • age = 40 • no diabetes • no hypertension • no dyslipidemia
+
+```{r}
+predict(cox.main, newdata = new_data, type = 'risk')
+```
+
+This population has 2.92 times higher risk for death (the event) compared to the average population
+
+For this, we need to add variable event and time
+
+```{r}
+new_data2 <- expand.grid(status3b = 'dead', time = c(5, 20, 50))
+new_data2
+
+```
+
+And combine with the previous data frame
+
+```{r}
+new_data3 <- data.frame(new_data, new_data2)
+head(new_data3)
+```
+
+And the predicted number of events are
+
+```{r}
+pred.exp <- predict(cox.main, newdata = new_data3, type = 'expected')
+pred.exp
+```
+
+```{r}
+cbind(new_data3, pred.exp)
+```
+
+## Residuals
+
+use residuals to assess for model fitness residuals() can be calculated to produce martingale, deviance, score or Schoenfeld residuals for a Cox proportional hazards model. This give the score residuals for each predictor in the cox model
+
+```{r}
+score.cox <- resid(cox.main, type = "score")
+head(score.cox)
+```
+
+### Martingale residuals
+
+```{r}
+marti.cox <- resid(cox.main, type = "martingale")
+head(marti.cox)
+```
+
+### Schoenfeld residuals
+
+```{r}
+schoen.cox <- resid(cox.main, type = "schoenfeld")
+head(schoen.cox)
+```
+
+### Scaled Schoenfeld residuals
+
+```{r}
+sschoen.cox <- resid(cox.main, type = "scaledsch")
+head(sschoen.cox)
+```
+
+### dfbeta
+
+```{r}
+dfbeta.cox <- resid(cox.main, type = "dfbeta")
+head(dfbeta.cox)
+```
+
+### Residuals plots
+
+Plot to identify the outliers using score residuals.
+
+```{r}
+plot(data2$gcs, score.cox[,2], ylab="Score residuals")
+```
+
+```{r}
+plot(data2$dm2cat, score.cox[,1], ylab="Score residuals")
+```
+
+Plot to identify the outliers using martingale residuals.
+
+```{r}
+plot(data2$hpt2cat, marti.cox, ylab = "Martingale residuals for sex")
+```
+
+```{r}
+plot(marti.cox, type = 'h', main = "Martingale residuals", ylab = "dfbetas",lwd = 2)
+```
+
+Using dfbetas, we can assess for the presence of influential subjects.
+
+```{r}
+plot(data2$gcs, dfbeta.cox[,1], main = "Dfbetas for gcs", ylab = "dfbetas")
+```
+
+```{r}
+plot(data2$gcs, dfbeta.cox[,2], type = 'h',
+main = "Dfbetas for bmi", ylab = "dfbetas",lwd = 2)
+```
+
+But you use the augment() function to do similar tasks as above. The resulting datasets consists of • the fitted variable • the std error of the fitted variable • the residuals
+
+```{r}
+pred.cox.main <- augment(cox.main, data = data2)
+pred.cox.main
+```
+
+### Using deviance
+
+```{r}
+ggcoxdiagnostics(cox.main, type = 'deviance', linear.predictions = FALSE)
+```
+
+### Using martingale
+
+```{r}
+ggcoxdiagnostics(cox.main, type = 'martingale', linear.predictions = FALSE)
+```
+
+### Using dfbeta
+
+```{r}
+ggcoxdiagnostics(cox.main, type = 'dfbeta', linear.predictions = FALSE)
+```
+
+<https://github.com/thuzaifah/Advance-statisitical-assignment.git>
