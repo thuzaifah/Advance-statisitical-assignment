@@ -1,0 +1,222 @@
+---
+title: "Parametric Analysis"
+author: 
+  - name: "Dr. Muhammad Za'im bin Mohd Samsuri"
+  - name: "Dr. Tengku Muhammad Hudzaifah bin Tengku Mokhtar"
+  - name: "Dr. Muhammad Abdul Hafiz bin Kamarul Zaman" 
+date: "15 June 2025"
+format: 
+  html:
+    toc: true
+    toc-title: "Contents"
+    toc-location: left
+    toc-depth: 3
+    toc-expand: true
+    number-sections: true
+    code-fold: false
+    code-summary: "Show the Code"
+    theme: 
+      light: united
+      dark: cyborg
+    embed-resources: true
+    df-print: paged
+editor: visual
+---
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(
+  message   = FALSE,
+  warning   = FALSE
+)
+```
+
+```{r}
+knitr::include_graphics("group.gif")
+```
+
+# Load necessary libraries
+
+```{r}
+library(survival)
+library(survminer)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(broom)
+library(tidyverse)
+library(readr)
+library(readxl)
+library(janitor)
+library(gtsummary)
+library(labelled)
+```
+
+# Load the dataset
+
+```{r}
+data1 <- read_excel("survival_data_esrd.xlsx")
+colnames(data1) <- tolower(colnames(data1))
+view(data1)
+
+```
+
+## Describe data
+
+In a simulated dataset of 456 patients with End-Stage Renal Disease (ESRD), patient survival time was measured to assess the duration from the onset of ESRD to death or censoring. Survival time was recorded in months and represents the time under renal replacement therapy. The dataset was designed to evaluate factors influencing mortality among ESRD patients. The variables are defined as follows:
+
+ID: Patient ID time_to_event_months: The time (in months) from the onset of ESRD until the patient died or was censored event: Indicates whether the patient died (coded 1) or was censored (coded 0)\
+age: The patient’s age at baseline (in years)\
+gender: Indicates the patient’s gender ("Male" or "Female")\
+treatment_group: Indicates the dialysis modality received, either Hemodialysis (HD) or Continuous Ambulatory Peritoneal Dialysis (CAPD)\
+bmi: The patient’s Body Mass Index (BMI), measured in kg/m²\
+smoker_status: Indicates whether the patient was a current smoker ("Yes") or not ("No") comorbidity_score: A numeric score (0–10) reflecting the patient’s burden of comorbid conditions
+
+# Data preparation
+
+```{r}
+data1<-data1 %>% mutate_if(is.character,~ as_factor(.))
+data1$time_to_event_months <- round(data1$time_to_event_months)
+glimpse(data1)
+```
+
+## Summary statistics
+
+```{r}
+summary(data1)
+tbl_summary(data1,
+            statistic = list(all_continuous() ~ "{median} ({p25}, {p75})",
+                             all_categorical() ~ "{n} ({p}%)"),
+            digits = all_continuous() ~ 1,
+            missing = "no") %>%
+  modify_header(label ~ "**Characteristic**") %>%
+  modify_caption("**Table: Patient Characteristics (N = 456)**") %>%
+  bold_labels()
+
+```
+
+This study included a total of 456 patients. The median age was 60 years, with most patients between 51 and 67 years old. There were slightly more males (52%) than females (48%). In terms of dialysis modality, 59% of the patients were on hemodialysis, while 41% were on continuous ambulatory peritoneal dialysis (CAPD). The median body mass index (BMI) was 25.3 kg/m², indicating that most patients were in the normal to slightly overweight range. About 29% of the patients were current smokers. The median comorbidity score was 3, suggesting that many patients had at least a few other health conditions. The median follow-up period was 97 months. During the study, 252 patients (55%) died. \# Estimation of AFT models
+
+## Exponential model
+
+```{r}
+surv.mod <- Surv(time = data1$time_to_event_months, event = data1$event == 1)
+exp.mod <- survreg(surv.mod ~ age + gender + treatment_group + bmi + smoker_status + comorbidity_score, data = data1, dist='exponential')
+summary(exp.mod)
+```
+
+### Interpretation of the exponential model
+
+Patients on CAPD had significantly longer survival than those on HD, with a time ratio (TR) of 1.42 (p = 0.007), indicating a 42% longer survival time. Smokers had much shorter survival, with a TR of 0.35 (p \< 0.001), while each unit increase in comorbidity score was associated with a 6.6% reduction in survival time (TR = 0.93, p = 0.051). Age, gender, and BMI showed no significant association with survival (p \> 0.05). The corresponding hazard ratios (HR) derived from the model were 0.70 for CAPD, 2.87 for smokers, and 1.07 per unit increase in comorbidity, indicating that CAPD patients had 30% lower risk of death, smokers had nearly 3 times higher risk, and higher comorbidity modestly increased the risk of death.
+
+## Weibull model
+
+```{r}
+wei.mod <- survreg(surv.mod ~ age + gender + treatment_group + bmi + smoker_status + comorbidity_score, data = data1, dist = 'weibull')
+summary(wei.mod)
+```
+
+The Weibull scale parameter is estimated at 0.966, giving a shape parameter of 1/0.966=1.0352 . Since the shape parameter is greater than 1, it indicates that the hazard of death increases over time.
+
+### Interpretation of the Weibull model
+
+The estimated log time to death in patients receiving CAPD treatment (compared to HD) was 0.34557. The Acceleration Factor (AF) or Time Ratio (TR) is exp ⁡(0.34557)=1.41256 exp(0.34557)=1.41256
+
+This means that patients on CAPD have 1.41 times longer survival time than those on HD. In other words, CAPD is associated with a longer time to death compared to HD.
+
+The estimated log time to death for current smokers (compared to non-smokers) was −1.04435, with an AF = exp(−1.04435) = 0.35179. This indicates that current smokers have about 35% of the survival time of non-smokers — i.e., smoking shortens survival substantially.
+
+For comorbidity score, the estimated log time was −0.06745, giving an AF = exp(−0.06745) = 0.9348. This means that for each additional point in comorbidity score, survival time decreases by about 6.5%, suggesting higher comorbidity leads to shorter time to death.
+
+Other variables such as age, gender, and BMI were not statistically significant (p \> 0.05), indicating no strong evidence of their association with survival time in this model.
+
+### Converting to TR and HR in Weibull model
+
+```{r}
+library(SurvRegCensCov)
+ConvertWeibull(wei.mod,conf.level = 0.95)
+```
+
+A parametric survival model was used to assess factors associated with time to death. Patients on CAPD had significantly longer survival compared to those on HD, with an expected time ratio (ETR) of 1.41 (95% CI: 1.10 to 1.81), indicating that CAPD patients lived about 41% longer on average. Smokers had significantly shorter survival times, with an ETR of 0.35 (95% CI: 0.27 to 0.45), suggesting their survival time was only 35% of that in non-smokers. Each additional comorbidity reduced survival by about 6.5% (ETR = 0.93, 95% CI: 0.87 to 1.00). Other variables including age, gender, and BMI showed no significant time effects. The corresponding hazard ratios indicated that CAPD patients had a 30% lower risk of death (HR = 0.70, 95% CI: 0.54 to 0.90), smokers had 2.95 times higher risk of death (HR = 2.95, 95% CI: 2.25 to 3.87), and each additional comorbidity increased the risk of death by 7% (HR = 1.07, 95% CI: 1.00 to 1.15). ####other model
+
+```{r}
+library(flexsurv)
+wei.mod.aft <- flexsurvreg(Surv(time_to_event_months, event) ~ age + gender + treatment_group + bmi + smoker_status + comorbidity_score, 
+                           data = data1, dist = 'weibull')
+wei.mod.aft
+```
+
+## PH Model
+
+```{r}
+wei.mod.ph <- flexsurvreg(Surv(time_to_event_months, event) ~age + gender + treatment_group + bmi + smoker_status + comorbidity_score, data = data1,dist = 'weibullPH')
+wei.mod.ph
+```
+
+A Weibull proportional hazards model was used to evaluate the risk of death in relation to demographic and clinical variables. Patients on CAPD had a significantly lower risk of death compared to those on HD, with a hazard ratio (HR) of 0.70 (95% CI: 0.54 to 0.90), indicating a 30% risk reduction. Smokers had nearly 3 times higher risk of death than non-smokers (HR = 2.95, 95% CI: 2.25 to 3.87), while each unit increase in comorbidity score was associated with a 7% increase in mortality risk (HR = 1.07, 95% CI: 1.00 to 1.15). Age, gender, and BMI were not significantly associated with the hazard of death (p \> 0.05). The shape parameter was approximately 1.03, suggesting the hazard function was roughly constant over time, consistent with the exponential distribution. \## Model adequacy for Weibull distribution
+
+```{r}
+WeibullDiag(Surv(time = data1$time_to_event_months, event = data1$event == 1) ~ treatment_group, 
+            data = data1)
+```
+
+```{r}
+WeibullDiag(Surv(time = data1$time_to_event_months, event = data1$event == 1) ~ smoker_status, 
+            data = data1)
+```
+
+# Prediction
+
+## Predict the survival time using weibull model
+
+For example, predicted survival times were estimated at the 25th, 50th (median), and 75th percentiles for a hypothetical patient with the following characteristics:
+
+Age = 50 years Gender = Female BMI = 25 kg/m² Treatment Group = Hemodialysis (HD) Comorbidity Score = 2.5 Smoker Status = Yes
+
+```{r}
+new.data <- data.frame(age = 50, gender = "Female", bmi = 25 ,treatment_group = "HD", comorbidity_score = 2.5,smoker_status = "Yes")
+quant.p <-c(0.25, 0.50, 0.75)
+months.p <- predict(wei.mod, newdata = new.data, type = 'quantile', p=quant.p)
+months.p
+```
+
+The predicted survival times (in months) under the Weibull model are:
+
+25th percentile: 37.0 months 50th percentile (Median survival time): 86.5 months 75th percentile: 169.1 months
+
+This means that 25% of patients with this profile are expected to die before 37 months,50% before 86.5 months, and 75% before 169.1 months.
+
+```{r}
+cbind(quant.p, months.p)
+```
+
+### Plot the predicted survival time
+
+```{r}
+plot(x = predict(wei.mod, newdata = new.data, type = "quantile", 
+                 p = (1:98)/100), y = (1:98)/100 , type = "l")
+```
+
+## Log-logistic model
+
+```{r}
+logl.mod <- survreg(surv.mod ~ age + gender + treatment_group + bmi + smoker_status + comorbidity_score, data = data1, dist = 'loglogistic')
+summary(logl.mod)
+```
+
+The Acceleration Factor is exp(0.39594) = 1.49, which means that patients on CAPD had 1.49 times longer survival time compared to those on HD.
+
+For smokers, the estimated log time ratio was –1.00505. The Acceleration Factor is exp(–1.00505) = 0.366, indicating that smokers had a shorter survival time by a factor of 0.366 compared to non-smokers — meaning they died more quickly.
+
+Other variables such as age, gender, BMI, and comorbidity score did not show significant effects on survival time (p \> 0.05). The scale parameter was 0.739, indicating moderate variation in survival distribution.
+
+# Checking the PH assumption
+
+```{r}
+kmfit <- survfit(surv.mod ~ data1$treatment_group)
+kmfit
+plot(log(kmfit$time), log(-log(kmfit$surv)), col = c("red", "blue"), xlab = "log(time)", ylab = "log(-log(survival))")
+```
+
+The plot do not look like a straight lines. It is also not parallel. So it does not support PH assumption. Our PH asssumption is violated. Our log-logistic model (we did earlier) for example might not be appropriate.
+
+<https://github.com/thuzaifah/Advance-statisitical-assignment.git>
