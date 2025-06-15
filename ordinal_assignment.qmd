@@ -1,0 +1,845 @@
+---
+title: "Ordinal Assignment"
+author: 
+  - Dr. Tengku Muhammad Huzaifah bin Tengku Mokhtar
+  - Dr. Muhammad Abdul Hafiz bin Kamarul Zaman
+  - Dr. Muhammad Za'im bin Mohd Samsuri
+date: "12 June 2025"
+format: 
+  html:
+    toc: true
+    toc-title: "Contents"
+    toc-location: left
+    toc-depth: 3
+    toc-expand: true
+    number-sections: true
+    code-fold: false
+    code-summary: "Show the Code"
+    theme: 
+      light: united
+      dark: cyborg
+    embed-resources: true
+    df-print: paged
+editor: visual
+---
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(
+  message   = FALSE,
+  warning   = FALSE
+)
+```
+
+```{r}
+knitr::include_graphics("group.gif")
+```
+
+# Introduction
+
+The dataset contains 4,092 rows and 21 features collected from community-based health screening data. One of the key variables of interest is fasting blood sugar (FBS), which will be categorized into three clinical classes:
+
+Normal (FBS \< 5.6 mmol/L)
+
+Prediabetes (FBS 5.6–6.9 mmol/L)
+
+Diabetes (FBS ≥ 7.0 mmol/L)
+
+The dataset includes a variety of demographic, anthropometric, and biochemical features such as:
+
+Demographic data: age, gender, rural/urban locality
+
+Lifestyle indicators: smoking status, hypertension history
+
+Anthropometric measures: height, weight, waist and hip circumference
+
+Blood pressure: mean systolic and diastolic blood pressure
+
+Biochemical values: HbA1c, cholesterol profiles (HDL, LDL, triglycerides, total cholesterol), and oral glucose tolerance test (OGTT) values
+
+This dataset is suitable for exploring predictors of abnormal fasting blood sugar levels using ordinal logistic regression.
+
+# Preparation
+
+```{r}
+library(here)
+library(tidyverse)
+library(haven)
+library(gtsummary)
+library(VGAM)
+library(nnet)
+library(broom)
+library(knitr)
+library(kableExtra)
+library(tibble)
+library(purrr)
+library(gt)
+library(ggplot2)
+library(ggeffects)
+library(reshape2)
+library(data.table)
+library(ordinal)
+library(foreign)
+library(brant)
+library(patchwork)
+```
+
+# Read Data
+
+```{r}
+datafbs.o <- read_csv("datamssm_b.csv")
+summary(datafbs.o)
+```
+
+```{r}
+glimpse(datafbs.o)
+```
+
+# Convert character to factor
+
+```{r}
+datafbs.o <- datafbs.o %>%
+  mutate(across(where(is.character), as.factor))
+glimpse(datafbs.o)
+```
+
+# Data Wrangling
+
+The predictors that will be selected in this dataset are hba1c, triglycerides, age, waist circumference, smoking status, and gender.
+
+```{r}
+datafbs.o <- datafbs.o %>%
+  select(fbs, hba1c, ftrigliz, age, waist, smoking, gender)
+
+# inspect the selected data
+glimpse(datafbs.o)
+```
+
+```{r}
+#confirm the reference group
+levels(datafbs.o$smoking)
+levels(datafbs.o$gender)
+```
+
+## Rename Column
+
+```{r}
+datafbs.o <- datafbs.o %>%
+  rename(
+    fbs_raw = fbs,
+    hba1c = hba1c,
+    triglycerides = ftrigliz,
+    age = age,
+    waist_circumference = waist,
+    smoking_status = smoking,
+    sex = gender
+  )
+```
+
+# Create categorical outcome variable
+
+We will use `cut()` function to create a categorical (factor) outcome variable. Variable fbs will be categorized into a 3 category variable renamed as cat_fbs.
+
+Then we use the `label()` function to label the variable.
+
+```{r}
+datafbs.o <- datafbs.o %>%
+  mutate(cat_fbs = cut(fbs_raw, 
+                   breaks = c(-Inf, 5.6, 7.0, Inf),
+                   labels = c("normal", "prediabetes", "diabetes"),
+                   right = FALSE))
+```
+
+Let us checked if we have grouped it correctly
+
+```{r}
+# Summarizing the min and max of 'fbs_raw' for each 'cat_fbs' group
+datafbs.o %>%
+  select(cat_fbs, fbs_raw) %>%
+  group_by(cat_fbs) %>%
+  summarize(
+    min_fbs_raw = min(fbs_raw, na.rm = TRUE),
+    max_fbs_raw = max(fbs_raw, na.rm = TRUE)
+  )
+```
+
+Next, we will used ordered function to create an ordinal variable and define the levels of the variable.
+
+We will reverse the order of the outcome variable.
+
+```{r}
+lev <- c('diabetes','prediabetes','normal')
+lev
+```
+
+```{r}
+datafbs.o <- datafbs.o %>% 
+  mutate(cat_fbs1 = fct_relevel(cat_fbs, lev)) %>%
+  mutate(cat_fbs1 = ordered(cat_fbs1, levels = lev))
+```
+
+Let us check if we have done correctly:
+
+```{r}
+str(datafbs.o$cat_fbs1)
+```
+
+```{r}
+levels(datafbs.o$cat_fbs)
+```
+
+```{r}
+table(datafbs.o$cat_fbs)
+```
+
+```{r}
+levels(datafbs.o$cat_fbs1)
+```
+
+```{r}
+table(datafbs.o$cat_fbs1)
+```
+
+# Exploratory Data Analysis
+
+```{r}
+datafbs.o %>%
+  select(-fbs_raw, -cat_fbs1) %>%  # remove unwanted variables
+  tbl_summary(
+    by = cat_fbs,
+    type = list(
+      smoking_status ~ "categorical",
+      sex ~ "categorical"
+    ),
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = all_continuous() ~ 2,
+    missing = "no"
+  ) %>%
+  add_overall() %>%
+  bold_labels()
+
+```
+
+## Plots
+
+Use histogram for numerical predictors, while bar plot for categorical predictors.
+
+1.  Hbaic
+
+    ```{r}
+    # Histogram of HbA1c by FBS category
+    p1 <- ggplot(datafbs.o, aes(x = hba1c, fill = cat_fbs)) +
+      geom_histogram(binwidth = 0.2, position = "dodge", alpha = 0.7, color = "black") +
+      facet_wrap(~ cat_fbs, scales = "free_y") +
+      labs(
+        title = "Distribution of HbA1c by FBS Category",
+        x = "HbA1c (%)",
+        y = "Count",
+        fill = "FBS Category"
+      ) +
+      theme_minimal()
+
+    p1
+    ```
+
+2.  Triglycerides
+
+    ```{r}
+    # Histogram of Triglycerides by FBS category
+    p2 <- ggplot(datafbs.o, aes(x = triglycerides, fill = cat_fbs)) +
+      geom_histogram(binwidth = 0.2, position = "dodge", alpha = 0.7, color = "black") +
+      facet_wrap(~ cat_fbs, scales = "free_y") +
+      labs(
+        title = "Distribution of Triglycerides by FBS Category",
+        x = "triglycerides levels",
+        y = "Count",
+        fill = "FBS Category"
+      ) +
+      theme_minimal()
+
+    p2
+    ```
+
+3.  Age
+
+    ```{r}
+    # Histogram of age by FBS category
+    p3 <- ggplot(datafbs.o, aes(x = age, fill = cat_fbs)) +
+      geom_histogram(binwidth = 0.2, position = "dodge", alpha = 0.7, color = "black") +
+      facet_wrap(~ cat_fbs, scales = "free_y") +
+      labs(
+        title = "Distribution of Age by FBS Category",
+        x = "Age",
+        y = "Count",
+        fill = "FBS Category"
+      ) +
+      theme_minimal()
+
+    p3
+    ```
+
+4.  Waist Circumference
+
+    ```{r}
+    # Histogram of Waist Circumference by FBS category
+    p4 <- ggplot(datafbs.o, aes(x = waist_circumference, fill = cat_fbs)) +
+      geom_histogram(binwidth = 0.2, position = "dodge", alpha = 0.7, color = "black") +
+      facet_wrap(~ cat_fbs, scales = "free_y") +
+      labs(
+        title = "Distribution of Waist Circumference by FBS Category",
+        x = "Waist Circumference",
+        y = "Count",
+        fill = "FBS Category"
+      ) +
+      theme_minimal()
+
+    p4
+    ```
+
+5.  Smoking Status
+
+    ```{r}
+    # Bar plot of smoking status by FBS category
+    p5 <- ggplot(datafbs.o, aes(x = cat_fbs, fill = smoking_status)) +
+      geom_bar(position = "dodge", alpha = 0.7) +
+      labs(title = "Distribution of Smoking Status by FBS Category",
+           x = "FBS Category",
+           y = "Count",
+           fill = "Smoking Status") +
+      theme_minimal()
+    p5
+    ```
+
+6.  Sex
+
+    ```{r}
+    # Bar plot of sex by FBS category
+    p6 <- ggplot(datafbs.o, aes(x = cat_fbs, fill = sex)) +
+      geom_bar(position = "dodge", alpha = 0.7) +
+      labs(title = "Distribution of Sex by FBS Category",
+           x = "FBS Category",
+           y = "Count",
+           fill = "Sex") +
+      theme_minimal()
+    p6
+    ```
+
+# Estimation
+
+## **Adjacent-category model or multinomial or baseline logit model**
+
+Here, we will show how to replicate the baseline logit model (unconstrained). We could not reproduce the adjancent-category models that is based on constrained logit models.
+
+Generate a new variable but with no ordering.
+
+```{r}
+datafbs.o <- 
+  datafbs.o %>% 
+  mutate(cat_fbs2 = fct_relevel(cat_fbs, lev))
+```
+
+Run the mlogit
+
+```{r}
+mlogit1 <- 
+  vglm(cat_fbs ~ smoking_status, multinomial, data = datafbs.o)
+summary(mlogit1)
+```
+
+### Calculate Confidence interval for the model
+
+```{r}
+conf_intervals <- confint(mlogit1)
+print(conf_intervals)
+```
+
+### Get the RRR
+
+```{r}
+exp(coef(mlogit1))
+```
+
+Build final table using provided values.
+
+```{r}
+# Define function to compute 95% CI for RRR
+calc_ci_rrr <- function(estimate, stderr) {
+  lower <- estimate - 1.96 * stderr
+  upper <- estimate + 1.96 * stderr
+  return(c(exp(lower), exp(upper)))
+}
+
+# Input full results manually
+coefficients <- data.frame(
+  Term = c(
+    "(Intercept):1", "(Intercept):2",
+    "smoking_statusquitted smoking:1", "smoking_statusquitted smoking:2",
+    "smoking_statusstill smoking:1", "smoking_statusstill smoking:2"
+  ),
+  Estimate = c(
+    1.54983, 0.43736,
+    -0.30237, -0.04432,
+    0.13946,  0.16048
+  ),
+  StdError = c(
+    0.05297, 0.06172,
+    0.16323, 0.18662,
+    0.13488, 0.15472
+  ),
+  ZValue = c(
+    29.256, 7.086,
+    -1.852, -0.237,
+    1.034, 1.037
+  ),
+  PValue = c(
+    "<2e-16", "1.38e-12",
+    "0.064", "0.812",
+    "0.301", "0.300"
+  )
+)
+
+# Calculate RRR and 95% CI for RRR
+coefficients <- coefficients %>%
+  mutate(
+    RRR = exp(Estimate),
+    CI_RRR = map2(Estimate, StdError, calc_ci_rrr)
+  ) %>%
+  unnest_wider(CI_RRR, names_sep = "_") %>%
+  rename(
+    CI_RRR_Lower = CI_RRR_1,
+    CI_RRR_Upper = CI_RRR_2
+  )
+
+# Output the table
+kable(coefficients, digits = 3, caption = "Combined Coefficients and RRR Table with Confidence Intervals")
+
+
+```
+
+## Continuation-ratio
+
+To perform a continuation-ratio analysis for the cat_fbs variable (categorized as *normal*, *prediabetes*, and *diabetes*), we need to create two sequential binary comparisons that reflect the forward progression of glycemic status:
+
+1.  compare **cat_fbs=diabetes vs cat_fbs=prediabetes.**
+
+    This assesses the odds of progressing to diabetes among those already beyond the normal stage.
+
+2.  compare **cat_fbs=diabetes and prediabetes vs cat_fbs=normal.**
+
+    This evaluates the odds of having progressed beyond the normal glycemic state into either prediabetes or diabetes.
+
+#### 1. compare cat_fbs=diabetes vs cat_fbs=prediabetes
+
+```{r}
+table(datafbs.o$cat_fbs) ; table(datafbs.o$cat_fbs1)
+```
+
+```{r}
+datafbs.o1 <- 
+  datafbs.o %>% 
+  filter(cat_fbs == 'diabetes' | cat_fbs == 'prediabetes')
+cr1 <- glm(cat_fbs1 ~ smoking_status, family = binomial(link ='logit'),
+           data = datafbs.o1)
+summary(cr1)
+```
+
+#### 2. compare cat_fbs=diabetes and prediabetes vs cat_fbs=normal
+
+For this we will recode variable fbs using ifelse function. Please, make sure the code will be 0 and 1. using code bigger will not make glm function work
+
+```{r}
+datafbs.o2 <- datafbs.o %>% 
+  filter(cat_fbs == 'diabetes' | 
+         cat_fbs == 'prediabetes'| 
+         cat_fbs == 'normal')
+table(datafbs.o2$cat_fbs1)
+```
+
+```{r}
+datafbs.o2 <- datafbs.o2 %>% 
+  mutate(cat_fbs2 = ifelse(cat_fbs1 == "diabetes", 0, 
+                        ifelse(cat_fbs1 == "prediabetes",0,1)))
+table(datafbs.o2$cat_fbs1) ; table(datafbs.o2$cat_fbs2)
+```
+
+And run the next CR model:
+
+```{r}
+cr2 <- 
+  glm(cat_fbs2 ~ smoking_status, family = binomial(link ='logit'), 
+           data = datafbs.o2)
+summary(cr2)
+```
+
+```{r}
+# Function to calculate confidence intervals
+calc_ci <- function(estimate, stderr) {
+  lower <- estimate - 1.96 * stderr
+  upper <- estimate + 1.96 * stderr
+  return(c(lower, upper))
+}
+
+# Create cr1 results
+cr1_results <- data.frame(
+  Model = "cr1",
+  Term = c("(Intercept)", "smoking_statusquitted smoking", "smoking_statusstill smoking"),
+  Estimate = c(0.43736, -0.04432, 0.16048),
+  StdError = c(0.06172, 0.18662, 0.15472),
+  ZValue = c(7.086, -0.237, 1.037),
+  PValue = c(1.38e-12, 0.812, 0.300)
+) %>%
+  mutate(CI = purrr::map2(Estimate, StdError, calc_ci)) %>%
+  tidyr::unnest_wider(CI, names_sep = "_")
+
+# Create cr2 results
+cr2_results <- data.frame(
+  Model = "cr2",
+  Term = c("(Intercept)", "smoking_statusquitted smoking", "smoking_statusstill smoking"),
+  Estimate = c(0.61428, -0.27567, 0.03891),
+  StdError = c(0.03741, 0.11909, 0.09168),
+  ZValue = c(16.419, -2.315, 0.424),
+  PValue = c(2e-16, 0.0206, 0.6713)
+) %>%
+  mutate(CI = purrr::map2(Estimate, StdError, calc_ci)) %>%
+  tidyr::unnest_wider(CI, names_sep = "_")
+
+# Combine the data frames
+combined_results <- bind_rows(cr1_results, cr2_results) %>%
+  rename(CI_Lower = CI_1, CI_Upper = CI_2)
+
+# Print the combined table in a tidy format
+kable(combined_results, format = "pipe", caption = "Combined Logistic Regression Results with Confidence Intervals")
+
+```
+
+#### 3. Conclusion
+
+**Model 1 Comparison: Diabetes (vs. Prediabetes)**
+
+Among individuals with elevated fasting blood sugar levels (diabetes or prediabetes), the odds of being in the diabetes group rather than prediabetes group were:
+
+-   1.17 times higher for those who still smoke compared to non-smokers *(OR = exp(0.16048) = 1.17; p = 0.300)*.
+
+-   0.96 times lower (or 4% lower odds) for those who had quit smoking compared to non-smokers *(OR = exp(-0.04432) = 0.96; p = 0.812)*.
+
+However, both associations were not statistically significant.
+
+**Model 2 Comparison: Diabetes and Prediabetes (vs. Normal)**
+
+When comparing those with any elevated FBS (diabetes or prediabetes) to those with normal levels, the odds of being in the elevated group were:
+
+-   0.76 times lower (or 24% reduced odds) among former smokers compared to non-smokers *(OR = exp(-0.27567) = 0.76; p = 0.021)* — this was statistically significant.
+
+-   1.04 times higher for current smokers, but the association was not statistically significant *(OR = exp(0.03891) = 1.04; p = 0.671)*.
+
+The estimates from the continuation-ratio models are relatively consistent across the comparisons, especially for the effect of smoking. In general, former smokers were less likely to fall into worse FBS categories, while current smoking status did not show a strong or consistent effect. The significant association in the second model indicates that quitting smoking may reduce the odds of having elevated fasting blood sugar compared to maintaining normal levels.
+
+## **Cumulative link logit model**
+
+This is also known as the proportional odds model.
+
+Cumulative Logit Models (Proportional Odds Models) Another example of proportional odds models. We use the the variables that code from the lowest fbs (=\<5.6/normal) to the highest fbs (\>=7.0/diabetes)
+
+```{r}
+# Calculate mean fbs for each category of cat_fbs
+mean_fbs_by_category <- datafbs.o %>%
+  group_by(cat_fbs) %>%
+  summarize(mean_fbs = mean(fbs_raw, na.rm = TRUE))
+
+# Display the result
+print(mean_fbs_by_category)
+```
+
+Recheck the levels to confirm that from smallest category of fbs to highest fbs.
+
+For the cat_fbs categories, the mean fbs values are as follows:
+
+-   cat_fbs (=\<5.6/normal): mean fbs values = 4.6
+
+-   cat_fbs (5.7-6.9/prediabetes): mean fbs values = 6.1
+
+-   cat_fbs (\>=7.0/diabetes): mean fbs values = 10.6
+
+In Stata for example, the way we treat cumulative link logits is *similar* (not similar in the estimation process, just the context) to ordinal linear regression. That is we estimate how big the increase in the outcome variable with every unit increase in the predictor.
+
+```{r}
+levels(datafbs.o$cat_fbs)
+```
+
+The variables:
+
+1.  outcome = cat_fbs
+
+2.  covariate = age
+
+We will use **ordinal::clm** function
+
+-   outcome: cat_fbs
+
+-   covariate: age
+
+```{r}
+o.age <- clm(cat_fbs ~ age, data=datafbs.o)
+summary(o.age)
+```
+
+These are
+
+-   the log odds ratio and
+
+-   the odss ratio
+
+```{r}
+tidy(o.age, conf.int = TRUE)
+```
+
+```{r}
+tidy(o.age, exponentiate = TRUE ,conf.int = TRUE)
+```
+
+### **Interpretation**
+
+The coefficient β̂age=0.0342942 . This shows that the older the age, then the value of fbs also increases.
+
+For every 1-year increase in age, the odds of being in a higher fbs category increased by about 1.3%.
+
+For every 10-year increase in age, the odds of being in a higher fbs category increase by about 13.9%.
+
+```{r}
+exp(1 * 0.013)
+```
+
+```{r}
+exp(10 * 0.013)
+```
+
+For every 1-year increase in age, the odds of being in a lower fbs category reduced by about 1.3%.
+
+For every 10-year increase in age, the odds of being in a lower fbs category reduced by about 12.2%.
+
+```{r}
+exp(1 * -0.013)
+```
+
+```{r}
+exp(10 * -0.013)
+```
+
+# Prediction
+
+## Predicted probability
+
+Use polr package
+
+**polr in MASS package**
+
+```{r}
+polr_cr3 <- MASS::polr(cat_fbs ~ age, data = datafbs.o, Hess = TRUE)
+summary(polr_cr3)
+```
+
+Then the probabilities are:
+
+```{r}
+prob_polr <- predict(polr_cr3, type = 'probs')
+head(prob_polr) ; tail(prob_polr)
+```
+
+```{r}
+# Create a new data frame with age, smoke, and gender
+newdat <- cbind(datafbs.o[, c("age", "smoking_status","sex")], prob_polr)
+
+# Reshape the data to long format
+lnewdat <- melt(newdat, id.vars = c("age", "smoking_status", "sex"), 
+                variable.name = "fbs_category", value.name = "Probability")
+
+# View the first few rows
+head(lnewdat)
+```
+
+```{r}
+ggplot(lnewdat, aes(x = age, y = Probability, colour = fbs_category)) +
+  geom_line() + facet_grid(sex ~ smoking_status, labeller="label_both")
+```
+
+## **Manual calculation for prediction**
+
+```{r}
+summary(o.age)
+```
+
+And we want to predict these data
+
+To predict the probabilities of i-th falls into each category for model for a new data, we need to create a new data first. We will use `expand.grid()` to create a new data of class `data.frame`
+
+This is the new data
+
+```{r}
+newData <- expand.grid(age = unique(datafbs.o$age))
+head(newData)
+```
+
+And now the predictions
+
+```{r}
+lp.o.age <- predict(o.age, newdata = newData, type = 'linear.predictor')
+lp.o.age
+```
+
+The coefficients for model o.age
+
+```{r}
+coef.o.age<- coef(o.age)
+coef.o.age
+```
+
+```{r}
+age_value <- 44
+lp.o1.bx <- coef.o.age['age'] * age_value
+```
+
+Putting them inside the equation
+
+```{r}
+lp.o1.bx <- 0.0342942 * 44
+lp.o1.bx <- 1.5089448
+```
+
+And complete the Eq 8.25 in Hosmer
+
+```{r}
+logit1 <- coef.o.age['normal|prediabetes'] - lp.o1.bx
+logit2 <- coef.o.age['prediabetes|diabetes'] - lp.o1.bx
+```
+
+Then the probabilities are
+
+```{r}
+pLeq1 <- 1 / (1 + exp(-logit1))  # p(Y <= first threshold)
+pLeq2 <- 1 / (1 + exp(-logit2))  # p(Y <= second threshold)
+
+pLeq1 <- 1 / (1 + exp(-0.7772651))  # = 0.6850903
+pLeq2 <- 1 / (1 + exp(-2.0646543))  # = 0.8874200
+
+pMat <- cbind(
+  p1 = pLeq1,                   # Probability of being in the first category
+  p2 = pLeq2 - pLeq1,           # Probability of being in the second category
+  p3 = 1 - pLeq2                # Probability of being in the third category
+)
+
+pMat
+```
+
+Let us confirm with the prediction made by `clm()`
+
+```{r}
+predict(o.age, newdata = newData, type = 'prob')
+```
+
+## **Checking proportional odds assumption**
+
+```{r}
+brant(polr_cr3)
+```
+
+# Results
+
+```{r}
+datafbs.o %>%
+  select(-fbs_raw, -cat_fbs1, -cat_fbs2) %>%  # remove unwanted variables
+  tbl_summary(
+    by = cat_fbs,
+    type = list(
+      smoking_status ~ "categorical",
+      sex ~ "categorical"
+    ),
+    statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ),
+    digits = all_continuous() ~ 2,
+    missing = "no"
+  ) %>%
+  add_overall() %>%
+  bold_labels() %>%
+  modify_caption("**Table 1: Characteristics of FBS Categories**")
+
+```
+
+```{r}
+data <- data.frame(
+  Smoking_Status = c("Quitted Smoking", "Still Smoking"),
+  Coefficient_normal_vs_diabetes = c(-0.30237, 0.13946),
+  SE_normal_vs_diabetes = c(0.16323, 0.13488),
+  p_value_normal_vs_diabetes = c(0.064, 0.301),
+  CI_normal_vs_diabetes = c("(-0.62, 0.02)", "(-0.12, 0.40)"),
+  Coefficient_prediabetes_vs_diabetes = c(-0.04432, 0.16048),
+  SE_prediabetes_vs_diabetes = c(0.18662, 0.15472),
+  p_value_prediabetes_vs_diabetes = c(0.812, 0.300),
+  CI_prediabetes_vs_diabetes = c("(-0.41, 0.32)", "(-0.14, 0.46)")
+)
+
+# Display the table
+kable(data,
+      col.names = c("Smoking Status", 
+                    "Coefficient", "SE", "p-value", "95% CI",
+                    "Coefficient", "SE", "p-value", "95% CI"), 
+      caption = "Table 2: Adjacent-category model or multinomial or baseline logit model") %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  add_header_above(c(" " = 1, 
+                     "Normal vs Diabetes" = 4, 
+                     "Prediabetes vs Diabetes" = 4)) %>%
+  column_spec(1, bold = TRUE) %>%
+  row_spec(0, bold = TRUE)
+```
+
+```{r}
+ggplot(lnewdat, aes(x = age, y = Probability, colour = fbs_category)) +
+  geom_line() + facet_grid(sex ~ smoking_status, labeller="label_both")
+```
+
+# **Intepretation**
+
+## **1. Adjacent-category model or multinomial or baseline logit model**
+
+### **Comparison of “Normal” vs. “Diabetes”**
+
+When compared to individuals who never smoked, the log odds of being in the "Normal" blood sugar category (vs. "Diabetes") for those who quitted smoking changes by –0.30 (95% CI: –0.62 to 0.02, p-value = 0.064).\
+This suggests that those who quitted smoking have lower odds of being in the "Normal" group compared to the "Diabetes" group, but the association is not statistically significant. The confidence interval includes 0, indicating that the true effect could be null or even in the opposite direction.
+
+For individuals who are still smoking, the log odds change by 0.14 (95% CI: –0.12 to 0.40, p-value = 0.301).\
+This indicates that current smokers have slightly higher odds of being in the "Normal" group relative to the "Diabetes" group compared to never smokers, but again, the result is not statistically significant, and the confidence interval includes 0.
+
+### **Comparison of “Prediabetes” vs. “Diabetes”**
+
+When compared to individuals who never smoked, the log odds of being in the "Prediabetes" category (vs. "Diabetes") for those who quitted smoking changes by –0.04 (95% CI: –0.41 to 0.32, p-value = 0.812).\
+This indicates no meaningful difference in odds between quitted smokers and never smokers for being in the "Prediabetes" vs. "Diabetes" category. The estimate is very close to 0 and the confidence interval is wide, suggesting high uncertainty.
+
+For individuals who are still smoking, the log odds change by 0.16 (95% CI: –0.14 to 0.46, p-value = 0.300).\
+This indicates no significant association between current smoking and the odds of being in the "Prediabetes" category versus the "Diabetes" category when compared to never smokers. The confidence interval spans both negative and positive values.
+
+## 2. Plot of Predicted Probabilities of fbs category by Age Faceted by Smoking status and gender
+
+**Age Effect**
+
+Across all panels, as age increases, the probability of being in the "normal" fasting blood sugar category (red line) decreases steadily, while the probability of being in the "prediabetes" (green) and "diabetes" (blue) categories increases.\
+This trend is consistent for both males and females, indicating that older age is associated with higher likelihood of abnormal fasting blood sugar levels, regardless of smoking status.
+
+**Smoking Status Effect**
+
+-   Never Smoked (left column):\
+    Individuals who never smoked consistently show the highest probabilities of being in the "normal" category and the lowest probabilities of diabetes, especially at younger ages. This suggests a protective pattern for never smokers across the lifespan.
+
+-   Quitted Smoking (middle column):\
+    Compared to never smokers, individuals who quitted smoking show a modestly lower probability of remaining in the normal range and higher probabilities of prediabetes and diabetes, especially at older ages. The gap between normal and abnormal categories narrows faster with age than in never smokers.
+
+-   Still Smoking (right column):\
+    Current smokers exhibit the lowest probabilities of being in the normal category across all ages. The probability of diabetes increases more sharply with age, particularly for males, suggesting higher long-term metabolic risk among current smokers.
+
+**Sex Differences**
+
+-   Across all smoking categories, females tend to maintain higher probabilities of being in the normal category and lower probabilities of diabetes compared to males.
+
+-   Males show a more pronounced age-related decline in the probability of normal blood sugar and a steeper increase in diabetes probability.
