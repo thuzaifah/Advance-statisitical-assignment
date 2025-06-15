@@ -1,0 +1,661 @@
+---
+title: "Mulltinomial Logistic Regression Assignment"
+author: 
+  - Dr. Tengku Muhammad Huzaifah bin Tengku Mokhtar
+  - Dr. Muhammad Abdul Hafiz bin Kamarul Zaman
+  - Dr. Muhammad Za'im bin Mohd Samsuri
+date: "12 June 2025"
+format: 
+  html:
+    toc: true
+    toc-title: "Contents"
+    toc-location: left
+    toc-depth: 3
+    toc-expand: true
+    number-sections: true
+    code-fold: false
+    code-summary: "Show the Code"
+    theme: 
+      light: united
+      dark: cyborg
+    embed-resources: true
+    df-print: paged
+editor: visual
+---
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(
+  message   = FALSE,
+  warning   = FALSE
+)
+```
+
+```{r}
+knitr::include_graphics("group.gif")
+```
+
+-   Workflow
+
+1.  Introduction
+
+2.  Preparation
+
+3.  Read data
+
+4.  Data Wrangling
+
+5.  Create new categorical variable from fbs
+
+6.  exploratory data analysis
+
+-   Confirm the order of fbs
+
+-   Estimation
+
+1.  VGAM Package
+
+2.  NNET Package
+
+-   Inferences
+
+1.  VGAM packages
+
+2.  NNET package
+
+-   Prediction
+
+1.  Predict the log odss
+
+2.  Predict the probability
+
+-   Result
+
+-   Interpretation
+
+# Workflow
+
+# Introduction
+
+The dataset contains 4,092 rows and 21 features collected from community-based health screening data. One of the key variables of interest is fasting blood sugar (FBS), which has been categorized into three clinical classes:
+
+Normal (FBS \< 5.6 mmol/L)
+
+Prediabetes (FBS 5.6–6.9 mmol/L)
+
+Diabetes (FBS ≥ 7.0 mmol/L)
+
+The dataset includes a variety of demographic, anthropometric, and biochemical features such as:
+
+Demographic data: age, gender, rural/urban locality
+
+Lifestyle indicators: smoking status, hypertension history
+
+Anthropometric measures: height, weight, waist and hip circumference
+
+Blood pressure: mean systolic and diastolic blood pressure
+
+Biochemical values: HbA1c, cholesterol profiles (HDL, LDL, triglycerides, total cholesterol), and oral glucose tolerance test (OGTT) values
+
+This dataset is suitable for exploring predictors of abnormal fasting blood sugar levels using multinomial logistic regression.
+
+# Preparation
+
+```{r}
+library(here)
+library(tidyverse)
+library(haven)
+library(gtsummary)
+library(VGAM)
+library(nnet)
+library(broom)
+library(knitr)
+library(kableExtra)
+library(tibble)
+library(purrr)
+library(gt)
+library(ggplot2)
+library(ggeffects)
+library(reshape2)
+library(data.table)
+library(foreign)
+library(gridExtra)
+library(grid)
+library(viridis)
+library(ggpubr)
+library(rmarkdown)
+library(readxl)
+```
+
+# Read data
+
+```{r}
+datafbs <- read_csv("datamssm_b.csv")
+glimpse(datafbs)
+```
+
+# Convert character to factor
+
+```{r}
+datafbs <- datafbs %>%
+  mutate(across(where(is.character), as.factor))
+glimpse(datafbs)
+```
+
+# Data wrangling
+
+```{r}
+datafbs <- datafbs %>%
+  select(fbs, hba1c, ftrigliz, age, waist)
+
+# inspect the selected data
+glimpse(datafbs)
+```
+
+## Rename column
+
+```{r}
+datafbs <- datafbs %>%
+  rename(
+    fbs_raw = fbs,
+    hba1c = hba1c,
+    triglycerides = ftrigliz,
+    age = age,
+    waist_circumference = waist
+  )
+```
+
+# Create new categorical variable of outcome (cat_fbs)
+
+```{r}
+datafbs <- datafbs %>%
+  mutate(
+    cat_fbs = case_when(
+      fbs_raw < 5.6 ~ "normal",
+      fbs_raw >= 5.6 & fbs_raw < 7.0 ~ "prediabetes",
+      fbs_raw >= 7.0 ~ "diabetes"
+    ),
+    cat_fbs = factor(cat_fbs, levels = c("diabetes", "prediabetes", "normal"))
+  )
+summary(datafbs)
+```
+
+```{r}
+datafbs %>% 
+  count(cat_fbs)
+
+# select predictors and outcome 
+datafbs <- datafbs %>%
+  select(cat_fbs, hba1c, triglycerides, age, waist_circumference)
+```
+
+# Exploratory Data Analysis
+
+```{r}
+# relevel cat_fbs into desired order
+datafbs <- datafbs %>%
+  mutate(cat_fbs = factor(cat_fbs, levels = c("normal", "prediabetes", "diabetes")))
+
+# create table summary
+datafbs %>%
+  tbl_summary(
+    by = cat_fbs,
+    statistic = list(all_continuous() ~ "{mean} ({sd})"),
+    digits = all_continuous() ~ 2,
+    missing = "no"
+  ) %>%
+  add_overall() %>%
+  bold_labels()
+```
+
+## Plots
+
+```{r}
+# Count cat_fbs categories and calculate percentages
+fbs_counts <- datafbs %>% count(cat_fbs)
+fbs_counts$percent <- round(fbs_counts$n / sum(fbs_counts$n) * 100, 2)
+
+# Define custom colors for the categories
+custom_colors <- c('#A6CEE3', '#FDBF6F', '#B2DF8A')  # Light blue, orange, green
+
+# Pie chart for cat_fbs
+p1 <- ggplot(fbs_counts, aes(x = "", y = n, fill = cat_fbs)) +
+  geom_bar(width = 1, stat = "identity") +
+  coord_polar("y") +
+  geom_text(aes(label = paste0(percent, "%")), position = position_stack(vjust = 0.5)) +
+  labs(title = "FBS Category Distribution", fill = "FBS Category") +
+  scale_fill_manual(values = custom_colors) +
+  theme_void()
+
+# Bar chart for cat_fbs
+p2 <- ggplot(fbs_counts, aes(x = cat_fbs, y = n, fill = cat_fbs)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = n), vjust = -0.5) +
+  labs(title = "FBS Category Count", x = "FBS Category", y = "Count") +
+  scale_fill_manual(values = custom_colors) +
+  theme_minimal()
+
+# Combine both plots into one row
+gridExtra::grid.arrange(p1, p2, ncol = 2, top = grid::textGrob(
+  "Distribution of FBS Categories",
+  gp = grid::gpar(fontsize = 20, fontface = "bold")
+))
+
+```
+
+Use histogram since all variables are numerical
+
+### Hba1c
+
+```{r}
+datafbs |>
+  ggplot(aes(hba1c)) + 
+  geom_histogram() + 
+  facet_grid(. ~ cat_fbs)
+```
+
+### Age
+
+```{r}
+datafbs |>
+  ggplot(aes(age)) + 
+  geom_histogram() + 
+  facet_grid(. ~ cat_fbs)
+```
+
+### Triglycerides
+
+```{r}
+datafbs |>
+  ggplot(aes(triglycerides)) + 
+  geom_histogram() + 
+  facet_grid(. ~ cat_fbs)
+```
+
+### Waist circumference
+
+```{r}
+datafbs |>
+  ggplot(aes(waist_circumference)) + 
+  geom_histogram() + 
+  facet_grid(. ~ cat_fbs)
+```
+
+# Confirm the order of cat_fbs
+
+```{r}
+levels(datafbs$cat_fbs)
+```
+
+However, we would like the diabetes as the smallest category. To do that we will use the fct_relevel()function.
+
+```{r}
+datafbs <- datafbs  %>% 
+  mutate(cat_fbs = fct_relevel(cat_fbs, 
+                               c("diabetes", 'prediabetes', 'normal')))
+levels(datafbs$cat_fbs)
+```
+
+# Estimation
+
+## VGAM Package
+
+Our intention to investigate the relationship between hba1c, age, triglyceride level, and waist circumference with the outcome variables cat_fbs. Thus, we will perform multinomial logistic regression model to estimate the relation for 2 models:
+
+Model 1: Diabetes vs Normal
+
+Model 2: Prediabetes vs Normal
+
+In both models, the reference group is Normal
+
+## Single Independent Variable
+
+### Hba1c
+
+```{r}
+log_hba1c <- vglm(cat_fbs ~ hba1c, 
+                 multinomial, data = datafbs)
+summary(log_hba1c)
+```
+
+### Triglycerides
+
+```{r}
+log_triglycerides <- vglm(cat_fbs ~ triglycerides, 
+                 multinomial, data = datafbs)
+summary(log_triglycerides)
+```
+
+### Age
+
+```{r}
+log_age <- vglm(cat_fbs ~ age, 
+                 multinomial, data = datafbs)
+summary(log_age)
+```
+
+### Waist Circumference
+
+```{r}
+log_waist <- vglm(cat_fbs ~ waist_circumference, 
+                 multinomial, data = datafbs)
+summary(log_waist)
+```
+
+## Multiple Independent Variables
+
+We feel that hba1c, triglycerides level, age, and waist circumference are all important independent variables. Hence, we want to fit a model with the four independent variables as the covariates.
+
+```{r}
+mlog <- vglm(cat_fbs ~ hba1c + triglycerides + age + waist_circumference,
+                    family = multinomial, data = datafbs)
+summary(mlog)
+```
+
+# Model with interaction term
+
+Then, we hypothesize that there could be a significant interaction between age and waist circumference. And to test the hypothesis, we extend the multivariable logistic regression model by adding an interaction term.
+
+```{r}
+mlog_interaction <- vglm(cat_fbs ~ hba1c + triglycerides + age + waist_circumference +
+                            age*waist_circumference,
+                          family = multinomial,
+                          data = datafbs)
+summary(mlog_interaction)
+
+```
+
+The interaction term in our model showed p-values above 0.05. As the p-value is bigger than the level of significance at 5% and the value of regression parameters for the interaction terms are likely not clinically meaningful, we have decided not to use the model with an interaction term.
+
+# NNET Package
+
+Unlike VGAM::vglm function - where the reference or the base outcome is the largest group (level) - the nnet::multinom uses the smallest group (level) as the reference or base outcome.
+
+## relevel the outcome variables to make normal as reference group
+
+```{r}
+datafbs  <- datafbs  %>%
+  mutate(cat_fbs_relev = relevel(cat_fbs, ref = "normal"))
+levels(datafbs$cat_fbs_relev)
+```
+
+## Fit multinomial logistic regression using nnet::multinom()
+
+```{r}
+mlog_nnet <- multinom(cat_fbs_relev ~ hba1c + triglycerides + age + waist_circumference, data = datafbs)
+```
+
+```{r}
+summary(mlog_nnet)
+```
+
+## Comparing objects from VGAM::vglm and nnet::multinom
+
+so running multinom will give result as above. Now lets compare the result with vglm
+
+```{r}
+summary(mlog)
+```
+
+# Inference
+
+## VGAM Package
+
+For the inference, we will: 1. calculate the 95% CI (interval estimates) 2. calculate the p-values (hypothesis testing)
+
+There is no facility inside thebroom::tidy() function to generate confidence intervals for object with class vglm. Because of that we will use the coef(), confint() and cind() functions to produce a rather nice table of inferences.
+
+We are going to follow these steps: 1. set the number of digits equal to 2 to limit the decimal numbers 2. return the regression coefficents for all \^β as an object named b_fitmlog2 3. return the the confidence intervals for all \^β as an object named ci_fitmlog2 4. combine the \^β and the corresponding 95% CIs
+
+```{r}
+b_mlog <- coef(mlog)
+ci_mlog <- confint(mlog) 
+b_ci_mlog <- data.frame(b_mlog,ci_mlog) %>%
+  rename("log odds" = b_mlog, "Lower CI" = X2.5.., "Upper CI" = X97.5..)
+b_ci_mlog %>% 
+  kbl(digits = 2, booktabs = T, caption = "Log odds from multinomial logistic regression") %>%
+  kable_styling(position = "center")
+```
+
+Afterwards, we will exponentiate the coefficients to obtain the relative-risk ratio. We then combine the results to the previous table. Finally, we will name the columns of the object tab_fitmlog2.
+
+```{r}
+rrr_mlog <- exp(b_ci_mlog)
+tab_mlog <- cbind(b_ci_mlog, rrr_mlog)
+colnames(tab_mlog) <- c('b', 'lower b', 'upper b',
+                        'RRR', 'lower RRR', 'upper RRR')
+tab_mlog %>%
+  kbl(digits = 2, booktabs = T, caption = "Log odds and RRR from multinomial logistic regression") %>%
+  kable_styling(position = "center")
+```
+
+```{r}
+# Build final table using provided values
+data <- data.frame(
+  Group = c("Diabetes", "", "", "Prediabetes", "", ""),
+  Variable = c("Intercept", "hba1c", "triglycerides", "Intercept", "hba1c", "triglycerides"),
+  B = c(-11.99, 1.24, 0.33, -6.88, 0.48, 0.21),
+  SE = c(0.55, 0.06, 0.05, 0.39, 0.06, 0.04),
+  Wald = c(-21.72, 20.72, 6.45, -17.62, 8.33, 5.22),
+  p = c("<0.001", "<0.001", "<0.001", "<0.001", "<0.001", "<0.001"),
+  OR = c(0.00, 3.47, 1.39, 0.00, 1.62, 1.24),
+  `95%CI` = c(
+    "(0.00, 0.00)", "(3.09, 3.90)", "(1.25, 1.53)",
+    "(0.00, 0.00)", "(1.45, 1.81)", "(1.14, 1.34)"
+  )
+)
+
+# Create styled table
+kbl(data, booktabs = TRUE,
+    col.names = c("Group", "Variable", "B", "SE", "Wald", "p", "OR", "95% CI"),
+    caption = "Table 2: Log odds and RRR from multinomial logistic regression") %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  column_spec(1, bold = TRUE, border_right = TRUE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#D7261E") %>%
+  footnote(general = "a The reference group is normal")
+
+```
+
+## NNET Package
+
+### P-value
+
+```{r}
+z.test <- summary(mlog_nnet)$coefficients/summary(mlog_nnet)$standard.errors
+# 2-tailed
+p.val <- (1 - pnorm(abs(z.test), 0, 1)) * 2
+colnames(p.val) <- c('p-val intercept', 'p-val hba1c', 'p-val triglycerides', 'p-val age', 'p-val waist_circumference')
+p.val
+```
+
+### CI for nnet::multinom
+
+```{r}
+confint(mlog_nnet, level=0.95)
+```
+
+# Prediction
+
+## Predict the log odds
+
+```{r}
+summary(log_hba1c)
+```
+
+The predicted log odds for the first 6 observations:
+
+1.  the predicted log odds for diabetes vs normal in column 1
+
+2.  the predicted log odds for prediabetes vs normal in column 2
+
+```{r}
+head(predict.vgam(log_hba1c, type = 'link'))
+```
+
+You can verify these prediction manually. For example the calculations for:
+
+1.  the 1st observation log odds
+
+2.  the 3rd observation log odds
+
+```{r}
+head(datafbs)[1:3,]
+```
+
+The values for the
+
+-   the 1st observation is hba1c = 4.2
+
+-   the 3rd observation is hba1c = 5.0
+
+```{r}
+# ptn 1: hba1c = 4.2
+# logit cat_fbs=diabetes = [1]  vs cat_fbs=normal =[3]
+#-10.42508  +  1.47018 *4.2
+-10.42508   +  1.47018 *4.2
+```
+
+```{r}
+# logit cat_fbs=prediabetes = [2]  vs cat_fbs=normal =[3]
+#-5.16554  +  0.73734*4.2
+-5.16554   +  0.73734*4.2
+```
+
+```{r}
+# ptn 3: hba1c = 5.0
+# logit cat_fbs=diabetes = [1]  vs cat_fbs=normal =[3]
+#-10.42508  +  1.47018 *5.0
+-10.42508   +  1.47018 *5.0
+```
+
+```{r}
+# logit cat_fbs=prediabetes = [2]  vs cat_fbs=normal =[3]
+#-5.16554  +  0.73734*5.0
+-5.16554   +  0.73734*5.0
+```
+
+# Predict the probability
+
+The predicted probability for the first 6 observation
+
+```{r}
+head(predict.vgam(log_hba1c, type = 'response'))
+```
+
+Manual calculation for probability. Let us take the first observation where,
+
+1.  log odds for group diabetes: -4.250306
+
+2.  log odds for group prediabetes: -2.0687082
+
+```{r}
+# probability being in the reference group (cat_fbs == normal = [3])
+# 1/(1 + exp(-4.250306) + exp(-2.0687082)
+1/(1 + exp( -4.250306  ) + exp(-2.0687082))
+```
+
+```{r}
+# probability being in the prediabetes group (cat_fbs == prediabetes = [2])
+# exp(-2.0687082)/(1 + exp(-4.250306) + exp(-2.0687082)
+exp(-2.0687082)/(1 + exp( -4.250306  ) + exp(-2.0687082))
+```
+
+```{r}
+# probability being in the diabetes group (cat_fbs == diabetes = [1])
+# exp(-4.250306)/(1 + exp(-4.250306) + exp(-2.0687082)
+exp(-4.250306)/(1 + exp( -4.250306  ) + exp(-2.0687082))
+```
+
+# Results
+
+```{r}
+# Assuming datafbs is your data frame
+# Creating the summary table with the caption
+datafbs %>%
+  select(cat_fbs, hba1c, triglycerides, age, waist_circumference) %>%
+  tbl_summary(
+    by = cat_fbs,
+    statistic = all_continuous() ~ "{mean} ({sd})",
+    digits = all_continuous() ~ 2,
+    missing = "no",
+    label = list(
+      hba1c ~ "HbA1c",
+      triglycerides ~ "Triglycerides",
+      age ~ "Age",
+      waist_circumference ~ "Waist Circumference"
+    )
+  ) %>%
+  add_overall() %>%
+  modify_caption("**Table 1: Characteristics of FBS Categories**") %>%
+  bold_labels()
+
+
+```
+
+```{r}
+library(kableExtra)
+
+# Updated data with 4 predictors
+data <- data.frame(
+  Group = c("Diabetes", "", "", "", "", 
+            "Prediabetes", "", "", "", ""),
+  Variable = c("Intercept", "hba1c", "triglycerides", "age", "waist_circumference",
+               "Intercept", "hba1c", "triglycerides", "age", "waist_circumference"),
+  B = c(-11.99, 1.24, 0.33, 0.02, 0.01,
+        -6.88, 0.48, 0.21, 0.03, 0.02),
+  SE = c(0.55, 0.06, 0.05, 0.005, 0.005,
+         0.39, 0.06, 0.04, 0.003, 0.003),
+  Wald = c(-21.72, 20.72, 6.45, 4.96, 2.76,
+           -17.62, 8.33, 5.22, 8.87, 5.24),
+  p = c("<0.001", "<0.001", "<0.001", "<0.001", "0.006",
+        "<0.001", "<0.001", "<0.001", "<0.001", "<0.001"),
+  OR = c(0.00, 3.47, 1.39, 1.02, 1.01,
+         0.00, 1.62, 1.24, 1.03, 1.02),
+  `95%CI` = c(
+    "(0.00, 0.00)", "(3.09, 3.90)", "(1.25, 1.53)", "(1.01, 1.03)", "(1.00, 1.02)",
+    "(0.00, 0.00)", "(1.45, 1.81)", "(1.14, 1.34)", "(1.02, 1.03)", "(1.01, 1.02)"
+  )
+)
+
+# Create styled table
+kbl(data, booktabs = TRUE,
+    col.names = c("Group", "Variable", "B", "SE", "Wald", "p", "OR", "95% CI"),
+    caption = "Table 2: Log odds and RRR from multinomial logistic regression") %>%
+  kable_styling(full_width = FALSE, position = "center") %>%
+  column_spec(1, bold = TRUE, border_right = TRUE) %>%
+  row_spec(0, bold = TRUE, color = "white", background = "#D7261E") %>%
+  footnote(general = "a The reference group is normal")
+```
+
+# Interpretation
+
+## **HbA1c**
+
+-   **Diabetes vs Normal:**\
+    Every increment of 1 unit in HbA1c, controlling for other factors, increases the odds of being in the diabetes group (in comparison to the normal group) by 1.24 (Adjusted RRR = 3.47, 95% CI: 3.09, 3.90, p-value \<0.001). The 95% confidence interval (3.09, 3.90) is narrow and does not include 1, indicating a statistically significant increase in the odds of being in the diabetes group as HbA1c increases.
+
+-   **Prediabetes vs Normal:**\
+    Every increment of 1 unit in HbA1c, controlling for other factors, increases the odds of being in the prediabetes group (in comparison to the normal group) by 0.48 (Adjusted RRR = 1.62, 95% CI: 1.45, 1.81, p-value \<0.001). The 95% confidence interval (1.45, 1.81) is narrow and does not include 1, indicating a statistically significant increase in the odds of being in the prediabetes group as HbA1c increases.
+
+## **Triglycerides**
+
+-   **Diabetes vs Normal:**\
+    Every increment of 1 unit in triglyceride level, controlling for other factors, increases the odds of being in the diabetes group (in comparison to the normal group) by 0.33 (Adjusted RRR = 1.39, 95% CI: 1.25, 1.53, p-value \<0.001). The 95% confidence interval (1.25, 1.53) is narrow and does not include 1, indicating a statistically significant increase in the odds of being in the diabetes group as triglyceride levels increase.
+
+-   **Prediabetes vs Normal:**\
+    Every increment of 1 unit in triglyceride level, controlling for other factors, increases the odds of being in the prediabetes group (in comparison to the normal group) by 0.21 (Adjusted RRR = 1.24, 95% CI: 1.14, 1.34, p-value \<0.001). The 95% confidence interval (1.14, 1.34) is narrow and does not include 1, indicating a statistically significant increase in the odds of being in the prediabetes group as triglyceride levels increase.
+
+## **Age**
+
+-   **Diabetes vs Normal:**\
+    Every increment of 1 year in age, controlling for other factors, increases the odds of being in the diabetes group (in comparison to the normal group) by 0.02 (Adjusted RRR = 1.02, 95% CI: 1.01, 1.03, p-value \<0.001). The 95% confidence interval (1.01, 1.03) is narrow and does not include 1, indicating a statistically significant association between older age and higher odds of diabetes.
+
+-   **Prediabetes vs Normal:**\
+    Every increment of 1 year in age, controlling for other factors, increases the odds of being in the prediabetes group (in comparison to the normal group) by 0.03 (Adjusted RRR = 1.03, 95% CI: 1.02, 1.03, p-value \<0.001). The 95% confidence interval (1.02, 1.03) is narrow and does not include 1, indicating a statistically significant increase in the odds of prediabetes with age.
+
+## **Waist Circumference**
+
+-   **Diabetes vs Normal:**\
+    Every increment of 1 cm in waist circumference, controlling for other factors, increases the odds of being in the diabetes group (in comparison to the normal group) by 0.01 (Adjusted RRR = 1.01, 95% CI: 1.00, 1.02, p-value = 0.006). The 95% confidence interval (1.00, 1.02) is narrow and does not include 1, indicating a statistically significant association between larger waist circumference and increased odds of diabetes.
+
+-   **Prediabetes vs Normal:**\
+    Every increment of 1 cm in waist circumference, controlling for other factors, increases the odds of being in the prediabetes group (in comparison to the normal group) by 0.02 (Adjusted RRR = 1.02, 95% CI: 1.01, 1.02, p-value \<0.001). The 95% confidence interval (1.01, 1.02) is narrow and does not include 1, indicating a statistically significant association between larger waist circumference and increased odds of prediabetes.
